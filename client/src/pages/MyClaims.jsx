@@ -1,10 +1,17 @@
 import { useState, useEffect } from 'react';
 import { api } from '../services/api';
 import GlassCard from '../components/GlassCard';
+import ClaimModal from '../components/ClaimModal';
+import { reasonLabels } from '../utils/matchLabels';
 
 const MyClaims = () => {
   const [claims, setClaims] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  // Suggested-from-matches state
+  const [suggestions, setSuggestions] = useState([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(true);
+  const [suggestionItem, setSuggestionItem] = useState(null);
 
   useEffect(() => {
     const fetchClaims = async () => {
@@ -20,10 +27,36 @@ const MyClaims = () => {
     fetchClaims();
   }, []);
 
+  useEffect(() => {
+    const fetchSuggestions = async () => {
+      try {
+        const data = await api.getMyMatchSuggestions();
+        setSuggestions(data.suggestions || []);
+      } catch (err) {
+        console.error('Error fetching match suggestions:', err);
+      } finally {
+        setSuggestionsLoading(false);
+      }
+    };
+    fetchSuggestions();
+  }, []);
+
   const getStatusEmoji = (status) => {
     if (status === 'approved') return '✅';
     if (status === 'rejected') return '❌';
     return '⏳';
+  };
+
+  const handleSuggestionClaimed = (item) => {
+    setSuggestions((prev) =>
+      prev
+        .map((s) =>
+          s.foundItem && s.foundItem._id === item._id
+            ? { ...s, foundItem: { ...s.foundItem, status: 'claimed' } }
+            : s
+        )
+        .filter((s) => s.foundItem && s.foundItem.status === 'available')
+    );
   };
 
   return (
@@ -36,6 +69,87 @@ const MyClaims = () => {
           Track the status of ownership requests submitted for found or lost items.
         </p>
       </div>
+
+      {/* ─── SUGGESTED FROM MATCHES ─────────────────────────────────── */}
+      <GlassCard style={{ padding: '24px', marginBottom: '32px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
+          <span style={{ fontSize: '1.3rem' }}>🎯</span>
+          <h2 style={{ fontSize: '1.2rem', fontWeight: '800', color: 'var(--text-primary)' }}>
+            Suggested from Matches
+          </h2>
+        </div>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '20px' }}>
+          Found items that strongly match your active lost reports. Claim one to start the verification process.
+        </p>
+
+        {suggestionsLoading ? (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '28px 0', gap: '12px', color: 'var(--text-secondary)' }}>
+            <div style={{ width: '28px', height: '28px', border: '3px solid var(--glass-border)', borderTop: '3px solid var(--accent-primary)', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+            Scanning your lost reports...
+          </div>
+        ) : suggestions.length === 0 ? (
+          <div style={{ padding: '20px', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', border: '1px dashed var(--glass-border)', color: 'var(--text-tertiary)', fontSize: '0.88rem', textAlign: 'center' }}>
+            No match-based suggestions right now. New candidates will appear here as found items are reported.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {suggestions.map((s) => (
+              <div
+                key={s.pairKey}
+                style={{
+                  display: 'flex',
+                  gap: '14px',
+                  alignItems: 'center',
+                  padding: '14px',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--glass-border)',
+                  background: 'var(--bg-primary)',
+                }}
+              >
+                {s.foundItem?.image?.url ? (
+                  <img src={s.foundItem.image.url} alt={s.foundItem.itemName} style={{ width: '56px', height: '56px', borderRadius: '10px', objectFit: 'cover', flexShrink: 0 }} />
+                ) : (
+                  <div style={{ width: '56px', height: '56px', borderRadius: '10px', background: 'var(--bg-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.3rem', flexShrink: 0 }}>📦</div>
+                )}
+                <div style={{ flexGrow: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center' }}>
+                    <strong style={{ fontSize: '0.95rem', color: 'var(--text-primary)' }}>
+                      {s.foundItem?.itemName}
+                    </strong>
+                    <span style={{ background: 'var(--accent-gradient)', color: '#fff', padding: '3px 9px', borderRadius: '9999px', fontSize: '0.72rem', fontWeight: '800', flexShrink: 0 }}>
+                      {s.score}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', marginTop: '2px' }}>
+                    Matches your lost item: <strong style={{ color: 'var(--text-secondary)' }}>{s.lostItem?.itemName}</strong> • 📍 {s.foundItem?.foundLocation}
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
+                    {reasonLabels(s.reasons).map((label, idx) => (
+                      <span key={`${s.pairKey}-${idx}`} style={{ fontSize: '0.66rem', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', background: 'var(--color-success-bg)', color: 'var(--color-success)', textTransform: 'uppercase' }}>
+                        {label}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  style={{ padding: '8px 14px', fontSize: '0.82rem', flexShrink: 0 }}
+                  onClick={() => setSuggestionItem(s.foundItem)}
+                  disabled={s.foundItem?.status !== 'available'}
+                >
+                  Claim
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </GlassCard>
+
+      {/* ─── EXISTING CLAIMS ────────────────────────────────────────── */}
+      <h2 style={{ fontSize: '1.3rem', fontWeight: '800', color: 'var(--text-primary)', marginBottom: '20px' }}>
+        Your Claim History
+      </h2>
 
       {loading ? (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '300px', gap: '16px' }}>
@@ -128,7 +242,7 @@ const MyClaims = () => {
                   <p style={{ fontSize: '0.88rem', color: 'var(--text-primary)', lineHeight: '1.5', background: 'rgba(255, 255, 255, 0.02)', padding: '12px', borderRadius: '8px', border: '1px solid var(--glass-border)' }}>
                     {claim.claimReason}
                   </p>
-                  
+
                   {claim.proofDetails && (
                     <div style={{ marginTop: '12px' }}>
                       <h4 style={{ fontSize: '0.75rem', fontWeight: '700', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: '4px' }}>
@@ -178,6 +292,15 @@ const MyClaims = () => {
             </GlassCard>
           ))}
         </div>
+      )}
+
+      {suggestionItem && (
+        <ClaimModal
+          item={suggestionItem}
+          itemType="FoundItem"
+          onClose={() => setSuggestionItem(null)}
+          onClaimed={handleSuggestionClaimed}
+        />
       )}
 
       <style>

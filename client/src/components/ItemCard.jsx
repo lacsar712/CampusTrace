@@ -24,7 +24,7 @@ const getCategorySvg = (category) => {
   );
 };
 
-const ItemCard = ({ item, type = 'lost', onActionClick, currentUserId }) => {
+const ItemCard = ({ item, type = 'lost', onActionClick, currentUserId, matchCount = 0, onViewMatches }) => {
   const isOwner = type === 'lost' ? item.ownerId === currentUserId : item.finderId === currentUserId;
   
   const formattedDate = new Date(item.dateLost || item.dateFound).toLocaleDateString(undefined, {
@@ -76,7 +76,30 @@ const ItemCard = ({ item, type = 'lost', onActionClick, currentUserId }) => {
         )}
 
         {/* Dynamic Status Badges */}
-        <div style={{ position: 'absolute', top: '12px', right: '12px', zIndex: '2' }}>
+        <div style={{ position: 'absolute', top: '12px', right: '12px', zIndex: '2', display: 'flex', gap: '6px', alignItems: 'center' }}>
+          {type === 'lost' && matchCount > 0 && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (onViewMatches) onViewMatches(item);
+              }}
+              title={`${matchCount} possible match${matchCount > 1 ? 'es' : ''}`}
+              style={{
+                background: 'var(--accent-gradient)',
+                color: '#ffffff',
+                border: 'none',
+                padding: '4px 10px',
+                borderRadius: '9999px',
+                fontSize: '0.72rem',
+                fontWeight: '800',
+                cursor: 'pointer',
+                boxShadow: '0 4px 12px rgba(99, 102, 241, 0.35)',
+              }}
+            >
+              🎯 {matchCount} match{matchCount > 1 ? 'es' : ''}
+            </button>
+          )}
           <span className={`badge badge-${item.status}`}>
             {item.status}
           </span>
@@ -178,17 +201,32 @@ const ItemCard = ({ item, type = 'lost', onActionClick, currentUserId }) => {
 
         {/* Interactive Action Button */}
         {onActionClick && (
-          <button
-            className={`btn ${isOwner ? 'btn-secondary' : 'btn-primary'}`}
-            style={{ width: '100%', padding: '10px' }}
-            onClick={(e) => {
-              e.stopPropagation();
-              onActionClick(item);
-            }}
-            disabled={item.status !== 'active' && item.status !== 'available'}
-          >
-            {isOwner ? 'My Report' : type === 'lost' ? 'Matches My Found' : 'Claim This Item'}
-          </button>
+          <>
+            {type === 'lost' && matchCount > 0 && onViewMatches && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ width: '100%', padding: '10px', marginBottom: '8px' }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onViewMatches(item);
+                }}
+              >
+                🎯 View {matchCount} Possible Match{matchCount > 1 ? 'es' : ''}
+              </button>
+            )}
+            <button
+              className={`btn ${isOwner ? 'btn-secondary' : 'btn-primary'}`}
+              style={{ width: '100%', padding: '10px' }}
+              onClick={(e) => {
+                e.stopPropagation();
+                onActionClick(item);
+              }}
+              disabled={item.status !== 'active' && item.status !== 'available'}
+            >
+              {isOwner ? 'My Report' : type === 'lost' ? 'Matches My Found' : 'Claim This Item'}
+            </button>
+          </>
         )}
       </div>
     </GlassCard>
