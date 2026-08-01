@@ -4,6 +4,8 @@ import { api } from '../services/api';
 import MetricCard from '../components/MetricCard';
 import ItemCard from '../components/ItemCard';
 import GlassCard from '../components/GlassCard';
+import ClaimModal from '../components/ClaimModal';
+import { reasonLabels } from '../utils/matchLabels';
 
 const CATEGORIES = [
   'All',
@@ -20,25 +22,40 @@ const CATEGORIES = [
 
 const Dashboard = () => {
   const { user } = useAuth();
-  
+
   // Feed states
   const [lostItems, setLostItems] = useState([]);
   const [foundItems, setFoundItems] = useState([]);
-  const [feedType, setFeedType] = useState('found'); // Default to 'found' since users claim found items!
+  const [feedType, setFeedType] = useState('found');
   const [loading, setLoading] = useState(true);
 
   // Filter states
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
 
-  // Claim Modal States
-  const [selectedItem, setSelectedItem] = useState(null);
-  const [claimForm, setClaimForm] = useState({ claimReason: '', proofDetails: '', studentIdProvided: '' });
-  const [claimErrors, setClaimErrors] = useState({});
-  const [claimTouched, setClaimTouched] = useState({});
-  const [claimSuccess, setClaimSuccess] = useState(false);
-  const [claimSubmitError, setClaimSubmitError] = useState(null);
-  const [claiming, setClaiming] = useState(false);
+  // Claim Modal state
+  const [claimItem, setClaimItem] = useState(null);
+
+  // Possible Matches states
+  const [matchCounts, setMatchCounts] = useState({});
+  const [matchesPanelItem, setMatchesPanelItem] = useState(null);
+  const [matchesList, setMatchesList] = useState([]);
+  const [matchesLoading, setMatchesLoading] = useState(false);
+  const [matchesError, setMatchesError] = useState(null);
+  const [dismissingKey, setDismissingKey] = useState(null);
+
+  const refreshMatchCounts = async (activeLostIds) => {
+    if (!activeLostIds || activeLostIds.length === 0) {
+      setMatchCounts({});
+      return;
+    }
+    try {
+      const countsRes = await api.getMatchCountsForLost(activeLostIds);
+      setMatchCounts(countsRes.counts || {});
+    } catch (err) {
+      console.error('Error fetching match counts:', err);
+    }
+  };
 
   // Fetch Items
   const fetchData = async () => {
@@ -48,8 +65,14 @@ const Dashboard = () => {
         api.getLostItems(),
         api.getFoundItems()
       ]);
-      setLostItems(lost.items || lost);
+      const lostList = lost.items || lost;
+      setLostItems(lostList);
       setFoundItems(found.items || found);
+
+      const activeLostIds = lostList
+        .filter((i) => i.status === 'active')
+        .map((i) => i._id);
+      await refreshMatchCounts(activeLostIds);
     } catch (err) {
       console.error('Error fetching dashboard items:', err);
     } finally {
@@ -65,22 +88,19 @@ const Dashboard = () => {
   // Filter logic
   const getFilteredItems = () => {
     const activeList = feedType === 'lost' ? lostItems : foundItems;
-    
+
     return activeList.filter((item) => {
-      // Show only active lost items or available found items in the feed
       const expectedStatus = feedType === 'lost' ? 'active' : 'available';
       if (item.status !== expectedStatus) return false;
 
-      // 1. Category Filter
       const categoryMatch = selectedCategory === 'All' || item.category === selectedCategory;
-      
-      // 2. Search Query Filter
+
       const searchLower = searchQuery.toLowerCase();
       const nameMatch = item.itemName.toLowerCase().includes(searchLower);
       const descMatch = item.description.toLowerCase().includes(searchLower);
       const locMatch = (item.location || item.foundLocation || '').toLowerCase().includes(searchLower);
       const queryMatch = searchQuery === '' || nameMatch || descMatch || locMatch;
-      
+
       return categoryMatch && queryMatch;
     });
   };
@@ -89,102 +109,84 @@ const Dashboard = () => {
   const getMetrics = () => {
     const activeLost = lostItems.filter(i => i.status === 'active').length;
     const availableFound = foundItems.filter(i => i.status === 'available').length;
-    
-    // Total returned items
+
     const returnedLost = lostItems.filter(i => i.status === 'returned').length;
     const returnedFound = foundItems.filter(i => i.status === 'returned').length;
-    const totalReturned = returnedLost + returnedFound + 2; // +2 for organic feel
+    const totalReturned = returnedLost + returnedFound + 2;
 
     return { activeLost, availableFound, totalReturned };
   };
 
   const metrics = getMetrics();
 
-  // ─── CLAIM SUBMISSION MODAL LOGIC ────────────────────────────────
   const handleOpenClaimModal = (item) => {
-    setSelectedItem(item);
-    setClaimForm({ claimReason: '', proofDetails: '', studentIdProvided: user?.studentId || '' });
-    setClaimErrors({});
-    setClaimTouched({});
-    setClaimSuccess(false);
-    setClaimSubmitError(null);
+    setClaimItem(item);
   };
 
   const handleCloseClaimModal = () => {
-    setSelectedItem(null);
+    setClaimItem(null);
   };
 
-  // Real-time claim validation
-  const validateClaim = (form) => {
-    const errors = {};
-    if (!form.claimReason) {
-      errors.claimReason = 'Claim reason is required';
-    } else if (form.claimReason.trim().length < 10) {
-      errors.claimReason = 'Claim reason/proof must be at least 10 characters';
-    }
-    return errors;
-  };
-
-  const handleClaimInputChange = (e) => {
-    const { name, value } = e.target;
-    const updatedForm = { ...claimForm, [name]: value };
-    setClaimForm(updatedForm);
-    if (claimTouched[name]) {
-      setClaimErrors(validateClaim(updatedForm));
-    }
-  };
-
-  const handleClaimBlur = (e) => {
-    const { name } = e.target;
-    const updatedTouched = { ...claimTouched, [name]: true };
-    setClaimTouched(updatedTouched);
-    setClaimErrors(validateClaim(claimForm));
-  };
-
-  const handleClaimSubmit = async (e) => {
-    e.preventDefault();
-    setClaimTouched({ claimReason: true, proofDetails: true, studentIdProvided: true });
-    
-    const errors = validateClaim(claimForm);
-    setClaimErrors(errors);
-    if (Object.keys(errors).length > 0) return;
-
-    setClaiming(true);
-    setClaimSubmitError(null);
-
-    try {
-      await api.submitClaim({
-        itemId: selectedItem._id,
-        itemType: feedType === 'lost' ? 'LostItem' : 'FoundItem',
-        claimReason: claimForm.claimReason,
-        proofDetails: claimForm.proofDetails,
-        studentIdProvided: claimForm.studentIdProvided
+  const handleClaimSuccess = (item, itemType) => {
+    if (itemType === 'FoundItem') {
+      setFoundItems(prev => prev.map(i =>
+        i._id === item._id ? { ...i, status: 'claimed' } : i
+      ));
+    } else {
+      setLostItems(prev => prev.map(i =>
+        i._id === item._id ? { ...i, status: 'matched' } : i
+      ));
+      setMatchCounts(prev => {
+        const next = { ...prev };
+        delete next[item._id];
+        return next;
       });
-      setClaimSuccess(true);
-      
-      // Update item status locally in state
-      if (feedType === 'found') {
-        setFoundItems(prev => prev.map(item => 
-          item._id === selectedItem._id ? { ...item, status: 'claimed' } : item
-        ));
-      } else {
-        setLostItems(prev => prev.map(item => 
-          item._id === selectedItem._id ? { ...item, status: 'matched' } : item
-        ));
-      }
+    }
+  };
 
-      // Automatically close modal after success
-      setTimeout(() => {
-        handleCloseClaimModal();
-      }, 2000);
+  // ─── POSSIBLE MATCHES PANEL ──────────────────────────────────────
+  const handleOpenMatches = async (item) => {
+    setMatchesPanelItem(item);
+    setMatchesList([]);
+    setMatchesError(null);
+    setMatchesLoading(true);
+    try {
+      const data = await api.getMatchesForLost(item._id);
+      setMatchesList(data.matches || []);
     } catch (err) {
-      setClaimSubmitError(err.message || 'Submission failed');
+      setMatchesError(err.message || 'Failed to load possible matches');
     } finally {
-      setClaiming(false);
+      setMatchesLoading(false);
+    }
+  };
+
+  const handleCloseMatches = () => {
+    setMatchesPanelItem(null);
+    setMatchesList([]);
+    setMatchesError(null);
+    setDismissingKey(null);
+  };
+
+  const handleDismissMatch = async (pairKey) => {
+    setDismissingKey(pairKey);
+    try {
+      await api.dismissMatch(pairKey);
+      setMatchesList((prev) => prev.filter((m) => m.pairKey !== pairKey));
+      if (matchesPanelItem) {
+        setMatchCounts((prev) => ({
+          ...prev,
+          [matchesPanelItem._id]: Math.max(0, (prev[matchesPanelItem._id] || 1) - 1),
+        }));
+      }
+    } catch (err) {
+      setMatchesError(err.message || 'Failed to mark pair as not relevant');
+    } finally {
+      setDismissingKey(null);
     }
   };
 
   const filteredItems = getFilteredItems();
+  const claimItemType = feedType === 'lost' ? 'LostItem' : 'FoundItem';
 
   return (
     <div className="container" style={{ paddingBottom: '60px' }}>
@@ -354,6 +356,8 @@ const Dashboard = () => {
                   type={feedType}
                   currentUserId={user?._id}
                   onActionClick={handleOpenClaimModal}
+                  matchCount={feedType === 'lost' ? matchCounts[item._id] || 0 : 0}
+                  onViewMatches={feedType === 'lost' ? handleOpenMatches : undefined}
                 />
               ))}
             </div>
@@ -361,8 +365,18 @@ const Dashboard = () => {
         </section>
       </div>
 
-      {/* ─── CLAIM SUBMISSION OVERLAY MODAL ───────────────────────────── */}
-      {selectedItem && (
+      {/* ─── CLAIM SUBMISSION MODAL (shared) ─────────────────────────── */}
+      {claimItem && (
+        <ClaimModal
+          item={claimItem}
+          itemType={claimItemType}
+          onClose={handleCloseClaimModal}
+          onClaimed={handleClaimSuccess}
+        />
+      )}
+
+      {/* ─── POSSIBLE MATCHES PANEL ──────────────────────────────────── */}
+      {matchesPanelItem && (
         <div
           style={{
             position: 'fixed',
@@ -372,28 +386,29 @@ const Dashboard = () => {
             height: '100%',
             background: 'rgba(0, 0, 0, 0.45)',
             backdropFilter: 'blur(8px)',
-            zIndex: 1000,
+            zIndex: 1100,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             padding: '24px',
           }}
-          onClick={handleCloseClaimModal}
+          onClick={handleCloseMatches}
         >
           <GlassCard
             style={{
               width: '100%',
-              maxWidth: '540px',
+              maxWidth: '640px',
+              maxHeight: '85vh',
+              overflowY: 'auto',
               padding: '32px',
               position: 'relative',
               boxShadow: '0 20px 50px rgba(0, 0, 0, 0.3)',
               background: 'var(--glass-modal-bg)',
             }}
-            onClick={(e) => e.stopPropagation()} // Prevent close on card click
+            onClick={(e) => e.stopPropagation()}
           >
-            {/* Close Button */}
             <button
-              onClick={handleCloseClaimModal}
+              onClick={handleCloseMatches}
               style={{
                 position: 'absolute',
                 top: '20px',
@@ -403,96 +418,100 @@ const Dashboard = () => {
                 color: 'var(--text-secondary)',
                 fontSize: '1.2rem',
                 cursor: 'pointer',
-                transition: 'var(--transition-fast)',
               }}
-              onMouseOver={(e) => (e.currentTarget.style.color = 'var(--text-primary)')}
-              onMouseOut={(e) => (e.currentTarget.style.color = 'var(--text-secondary)')}
             >
               ✕
             </button>
 
-            {claimSuccess ? (
-              <div style={{ textAlign: 'center', padding: '24px 0' }}>
-                <span style={{ fontSize: '3.5rem', display: 'block', marginBottom: '16px', animation: 'scaleUp 0.3s ease-out' }}>🎉</span>
-                <h3 style={{ fontSize: '1.5rem', fontWeight: '800', color: 'var(--color-success)', marginBottom: '8px' }}>
-                  Claim Submitted Successfully!
-                </h3>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.92rem' }}>
-                  Your claim has been recorded. Administrators will verify the proof and contact you. Redirecting...
-                </p>
+            <span style={{ fontSize: '0.78rem', color: 'var(--accent-primary)', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              🎯 Possible Matches
+            </span>
+            <h3 style={{ fontSize: '1.4rem', fontWeight: '800', margin: '6px 0 4px', color: 'var(--text-primary)' }}>
+              {matchesPanelItem.itemName}
+            </h3>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '20px' }}>
+              Found-item candidates ranked by match score (minimum 60).
+            </p>
+
+            {matchesLoading ? (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px 0', gap: '12px', color: 'var(--text-secondary)' }}>
+                <div style={{ width: '32px', height: '32px', border: '3px solid var(--glass-border)', borderTop: '3px solid var(--accent-primary)', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+                Calculating matches...
+              </div>
+            ) : matchesError ? (
+              <div style={{ background: 'var(--color-danger-bg)', color: 'var(--color-danger)', border: '1px solid var(--color-danger)', padding: '12px 16px', borderRadius: 'var(--radius-md)', fontSize: '0.88rem', fontWeight: '600' }}>
+                ⚠️ {matchesError}
+              </div>
+            ) : matchesList.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--text-secondary)' }}>
+                <span style={{ fontSize: '2.5rem', display: 'block', marginBottom: '12px' }}>🔍</span>
+                No possible matches found at this time.
               </div>
             ) : (
-              <form onSubmit={handleClaimSubmit}>
-                <h3 style={{ fontSize: '1.4rem', fontWeight: '800', marginBottom: '6px', color: 'var(--text-primary)' }}>
-                  Submit Ownership Claim
-                </h3>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '24px' }}>
-                  Item: <strong style={{ color: 'var(--text-primary)' }}>{selectedItem.itemName}</strong> ({selectedItem.category})
-                </p>
-
-                {claimSubmitError && (
-                  <div style={{ background: 'var(--color-danger-bg)', color: 'var(--color-danger)', border: '1px solid var(--color-danger)', padding: '10px 14px', borderRadius: 'var(--radius-md)', fontSize: '0.85rem', fontWeight: '600', marginBottom: '18px' }}>
-                    ⚠️ {claimSubmitError}
-                  </div>
-                )}
-
-                <div className="input-group">
-                  <label className="input-label">Reason for Claim (Proof of Ownership) *</label>
-                  <textarea
-                    name="claimReason"
-                    value={claimForm.claimReason}
-                    onChange={handleClaimInputChange}
-                    onBlur={handleClaimBlur}
-                    rows="3"
-                    className={`input-field ${claimTouched.claimReason && claimErrors.claimReason ? 'error' : claimTouched.claimReason && !claimErrors.claimReason ? 'success' : ''}`}
-                    placeholder="Describe exactly when and where you lost it, brand name, distinctive marks, lockscreen passwords, contents etc."
-                    style={{ resize: 'none', height: '90px' }}
-                    required
-                  />
-                  {claimTouched.claimReason && claimErrors.claimReason && (
-                    <span className="validation-msg error">{claimErrors.claimReason}</span>
-                  )}
-                </div>
-
-                <div className="input-group">
-                  <label className="input-label">Additional Serial Number / Proof Details (Optional)</label>
-                  <input
-                    type="text"
-                    name="proofDetails"
-                    value={claimForm.proofDetails}
-                    onChange={handleClaimInputChange}
-                    className="input-field"
-                    placeholder="e.g. Serial: WH-10023, keys labeled 'Hostel A'"
-                  />
-                </div>
-
-                <div className="input-group" style={{ marginBottom: '28px' }}>
-                  <label className="input-label">Verified Student ID *</label>
-                  <input
-                    type="text"
-                    name="studentIdProvided"
-                    value={claimForm.studentIdProvided}
-                    onChange={handleClaimInputChange}
-                    className="input-field"
-                    placeholder="Confirm your Student ID card number"
-                    required
-                  />
-                </div>
-
-                <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
-                  <button type="button" className="btn btn-secondary" onClick={handleCloseClaimModal} style={{ padding: '10px 18px' }}>
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="btn btn-primary"
-                    style={{ padding: '10px 24px' }}
-                    disabled={claiming || !claimForm.claimReason || Object.keys(claimErrors).length > 0}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                {matchesList.map((m) => (
+                  <div
+                    key={m.pairKey}
+                    style={{
+                      padding: '14px',
+                      borderRadius: 'var(--radius-md)',
+                      border: '1px solid var(--glass-border)',
+                      background: 'var(--bg-primary)',
+                    }}
                   >
-                    {claiming ? 'Submitting...' : 'Submit Claim'}
-                  </button>
-                </div>
-              </form>
+                    <div style={{ display: 'flex', gap: '14px' }}>
+                      {m.foundItem?.image?.url ? (
+                        <img src={m.foundItem.image.url} alt={m.foundItem.itemName} style={{ width: '64px', height: '64px', borderRadius: '10px', objectFit: 'cover', flexShrink: 0 }} />
+                      ) : (
+                        <div style={{ width: '64px', height: '64px', borderRadius: '10px', background: 'var(--bg-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.5rem', flexShrink: 0 }}>📦</div>
+                      )}
+                      <div style={{ flexGrow: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
+                          <h4 style={{ fontSize: '1rem', fontWeight: '700', color: 'var(--text-primary)' }}>
+                            {m.foundItem?.itemName}
+                          </h4>
+                          <span style={{ background: 'var(--accent-gradient)', color: '#fff', padding: '4px 10px', borderRadius: '9999px', fontSize: '0.78rem', fontWeight: '800', flexShrink: 0 }}>
+                            {m.score}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: '0.82rem', color: 'var(--text-tertiary)', marginTop: '2px' }}>
+                          📍 {m.foundItem?.foundLocation} • 📅 {m.foundItem ? new Date(m.foundItem.dateFound).toLocaleDateString() : ''}
+                        </div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
+                          {reasonLabels(m.reasons).map((label, idx) => (
+                            <span
+                              key={`${m.pairKey}-${idx}`}
+                              style={{
+                                fontSize: '0.7rem',
+                                fontWeight: '700',
+                                padding: '3px 8px',
+                                borderRadius: '6px',
+                                background: 'var(--color-success-bg)',
+                                color: 'var(--color-success)',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.3px',
+                              }}
+                            >
+                              {label}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '10px' }}>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        style={{ padding: '6px 12px', fontSize: '0.78rem' }}
+                        onClick={() => handleDismissMatch(m.pairKey)}
+                        disabled={dismissingKey === m.pairKey}
+                      >
+                        {dismissingKey === m.pairKey ? 'Hiding...' : 'Not relevant'}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             )}
           </GlassCard>
         </div>

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
 import GlassCard from '../components/GlassCard';
+import { reasonLabels } from '../utils/matchLabels';
 
 const CATEGORIES = [
   'Electronics',
@@ -39,6 +40,9 @@ const ReportItem = () => {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [success, setSuccess] = useState(false);
+  const [createdItem, setCreatedItem] = useState(null);
+  const [topMatches, setTopMatches] = useState([]);
+  const [matchesLoading, setMatchesLoading] = useState(false);
 
   const validateForm = () => {
     const newErrors = {};
@@ -181,16 +185,33 @@ const ReportItem = () => {
     }
 
     try {
+      let created;
       if (reportType === 'lost') {
-        await api.createLostItem(formData);
+        created = await api.createLostItem(formData);
       } else {
-        await api.createFoundItem(formData);
+        created = await api.createFoundItem(formData);
+      }
+
+      setCreatedItem(created || null);
+
+      if (reportType === 'lost' && created?._id) {
+        setMatchesLoading(true);
+        api
+          .getMatchesForLost(created._id, 3)
+          .then((data) => setTopMatches(data.matches || []))
+          .catch((err) => {
+            console.error('Error fetching matches for new lost item:', err);
+            setTopMatches([]);
+          })
+          .finally(() => setMatchesLoading(false));
+      } else {
+        setTopMatches([]);
       }
 
       setSuccess(true);
       setTimeout(() => {
         navigate('/');
-      }, 2000);
+      }, 5000);
     } catch (err) {
       setSubmitError(err.message || 'Failed to submit report. Please try again.');
     } finally {
@@ -276,14 +297,78 @@ const ReportItem = () => {
         </div>
 
         {success ? (
-          <div style={{ textAlign: 'center', padding: '40px 0' }}>
+          <div style={{ textAlign: 'center', padding: '24px 0' }}>
             <span style={{ fontSize: '4rem', display: 'block', marginBottom: '16px', animation: 'scaleUp 0.3s ease-out' }}>🎉</span>
             <h3 style={{ fontSize: '1.5rem', fontWeight: '800', color: 'var(--color-success)', marginBottom: '8px' }}>
               Report Successfully Created!
             </h3>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.92rem' }}>
-              Your {reportType} item report has been published. Redirecting to Feed Dashboard...
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.92rem', marginBottom: '20px' }}>
+              Your {reportType} item report has been published. Redirecting to Feed Dashboard in a few seconds...
             </p>
+
+            {reportType === 'lost' && (
+              <div style={{ textAlign: 'left', marginTop: '8px' }}>
+                <h4 style={{ fontSize: '1rem', fontWeight: '700', color: 'var(--text-primary)', marginBottom: '12px', textAlign: 'center' }}>
+                  🎯 Top Possible Matches
+                </h4>
+                {matchesLoading ? (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', padding: '20px', color: 'var(--text-secondary)' }}>
+                    <div style={{ width: '24px', height: '24px', border: '3px solid var(--glass-border)', borderTop: '3px solid var(--accent-primary)', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+                    Scanning found items...
+                  </div>
+                ) : topMatches.length === 0 ? (
+                  <p style={{ color: 'var(--text-tertiary)', fontStyle: 'italic', fontSize: '0.88rem', textAlign: 'center', padding: '12px' }}>
+                    No strong matches found yet. We'll surface them here as new items are reported.
+                  </p>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {topMatches.map((m) => (
+                      <div
+                        key={m.pairKey}
+                        style={{
+                          display: 'flex',
+                          gap: '12px',
+                          alignItems: 'center',
+                          padding: '12px',
+                          borderRadius: 'var(--radius-md)',
+                          border: '1px solid var(--glass-border)',
+                          background: 'var(--bg-primary)',
+                        }}
+                      >
+                        {m.foundItem?.image?.url ? (
+                          <img src={m.foundItem.image.url} alt={m.foundItem.itemName} style={{ width: '48px', height: '48px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} />
+                        ) : (
+                          <div style={{ width: '48px', height: '48px', borderRadius: '8px', background: 'var(--bg-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.2rem', flexShrink: 0 }}>📦</div>
+                        )}
+                        <div style={{ flexGrow: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center' }}>
+                            <strong style={{ fontSize: '0.92rem', color: 'var(--text-primary)' }}>{m.foundItem?.itemName}</strong>
+                            <span style={{ background: 'var(--accent-gradient)', color: '#fff', padding: '3px 8px', borderRadius: '9999px', fontSize: '0.72rem', fontWeight: '800' }}>{m.score}</span>
+                          </div>
+                          <div style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', marginTop: '2px' }}>
+                            📍 {m.foundItem?.foundLocation} • 📅 {m.foundItem ? new Date(m.foundItem.dateFound).toLocaleDateString() : ''}
+                          </div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
+                            {reasonLabels(m.reasons).map((label, idx) => (
+                              <span key={`${m.pairKey}-${idx}`} style={{ fontSize: '0.66rem', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', background: 'var(--color-success-bg)', color: 'var(--color-success)', textTransform: 'uppercase' }}>{label}</span>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <button
+              type="button"
+              className="btn btn-primary"
+              style={{ marginTop: '24px', padding: '10px 24px' }}
+              onClick={() => navigate('/')}
+            >
+              Go to Dashboard
+            </button>
           </div>
         ) : (
           <form onSubmit={handleSubmit}>

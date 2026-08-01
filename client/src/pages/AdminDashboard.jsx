@@ -1,15 +1,20 @@
 import { useState, useEffect } from 'react';
 import { api } from '../services/api';
 import GlassCard from '../components/GlassCard';
+import { reasonLabels } from '../utils/matchLabels';
 
 const AdminDashboard = () => {
   const [claims, setClaims] = useState([]);
   const [loading, setLoading] = useState(true);
-  
+
   // Interactive moderation state
   const [reviews, setReviews] = useState({}); // Stores admin comments per claim ID
   const [actionError, setActionError] = useState(null);
   const [actionSuccessMsg, setActionSuccessMsg] = useState(null);
+
+  // Read-only high-score match pairs board
+  const [highScorePairs, setHighScorePairs] = useState([]);
+  const [highScoreLoading, setHighScoreLoading] = useState(true);
 
   const fetchAllClaims = async () => {
     try {
@@ -26,6 +31,21 @@ const AdminDashboard = () => {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchAllClaims();
+  }, []);
+
+  useEffect(() => {
+    const fetchHighScorePairs = async () => {
+      try {
+        const data = await api.getHighScorePairs();
+        setHighScorePairs(data.pairs || []);
+      } catch (err) {
+        console.error('Error fetching high-score pairs:', err);
+      } finally {
+        setHighScoreLoading(false);
+      }
+    };
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchHighScorePairs();
   }, []);
 
   const handleCommentChange = (claimId, text) => {
@@ -109,6 +129,80 @@ const AdminDashboard = () => {
           🎉 {actionSuccessMsg}
         </div>
       )}
+
+      {/* ─── READ-ONLY HIGH-SCORE MATCH PAIRS ────────────────────────── */}
+      <GlassCard style={{ padding: '24px', marginBottom: '32px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
+          <span style={{ fontSize: '1.3rem' }}>🎯</span>
+          <h2 style={{ fontSize: '1.2rem', fontWeight: '800', color: 'var(--text-primary)' }}>
+            High-Score Match Pairs
+          </h2>
+        </div>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '20px' }}>
+          Read-only overview of active lost reports matching available found items with a score of 80 or higher. This panel does not change any claim or item state.
+        </p>
+
+        {highScoreLoading ? (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '28px 0', gap: '12px', color: 'var(--text-secondary)' }}>
+            <div style={{ width: '28px', height: '28px', border: '3px solid var(--glass-border)', borderTop: '3px solid var(--accent-primary)', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+            Loading high-score pairs...
+          </div>
+        ) : highScorePairs.length === 0 ? (
+          <div style={{ padding: '20px', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', border: '1px dashed var(--glass-border)', color: 'var(--text-tertiary)', fontSize: '0.88rem', textAlign: 'center' }}>
+            No high-score (≥80) active/available pairs at the moment.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {highScorePairs.map((p) => (
+              <div
+                key={p.pairKey}
+                style={{
+                  padding: '14px',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--glass-border)',
+                  background: 'var(--bg-primary)',
+                  display: 'grid',
+                  gridTemplateColumns: '1fr auto 1fr auto',
+                  gap: '14px',
+                  alignItems: 'center',
+                }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: '0.72rem', fontWeight: '800', color: 'var(--color-danger)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    Lost
+                  </div>
+                  <div style={{ fontWeight: '700', color: 'var(--text-primary)', fontSize: '0.95rem' }}>{p.lostItem?.itemName}</div>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>
+                    {p.lostItem?.category} • 📍 {p.lostItem?.location}
+                  </div>
+                </div>
+                <span style={{ fontSize: '1.2rem', color: 'var(--text-tertiary)' }}>⇄</span>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: '0.72rem', fontWeight: '800', color: 'var(--color-success)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    Found
+                  </div>
+                  <div style={{ fontWeight: '700', color: 'var(--text-primary)', fontSize: '0.95rem' }}>{p.foundItem?.itemName}</div>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>
+                    {p.foundItem?.category} • 📍 {p.foundItem?.foundLocation}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
+                  <span style={{ background: 'var(--accent-gradient)', color: '#fff', padding: '4px 10px', borderRadius: '9999px', fontSize: '0.82rem', fontWeight: '800' }}>
+                    {p.score}
+                  </span>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', justifyContent: 'flex-end', maxWidth: '160px' }}>
+                    {reasonLabels(p.reasons).map((label, idx) => (
+                      <span key={`${p.pairKey}-${idx}`} style={{ fontSize: '0.62rem', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', background: 'var(--color-success-bg)', color: 'var(--color-success)', textTransform: 'uppercase' }}>
+                        {label}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </GlassCard>
 
       {loading ? (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '300px', gap: '16px' }}>
