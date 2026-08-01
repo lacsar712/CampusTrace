@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
+import { formatReason } from '../utils/matchAssist';
 import GlassCard from '../components/GlassCard';
 
 const CATEGORIES = [
@@ -39,6 +40,7 @@ const ReportItem = () => {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [success, setSuccess] = useState(false);
+  const [topMatches, setTopMatches] = useState([]);
 
   const validateForm = () => {
     const newErrors = {};
@@ -182,15 +184,24 @@ const ReportItem = () => {
 
     try {
       if (reportType === 'lost') {
-        await api.createLostItem(formData);
+        const created = await api.createLostItem(formData);
+
+        // Fetch Top 3 possible matches for the newly reported lost item
+        try {
+          const data = await api.getMatchesForLostItem(created._id);
+          setTopMatches((data.matches || []).slice(0, 3));
+        } catch (matchErr) {
+          console.error('Error fetching possible matches:', matchErr);
+        }
+
+        setSuccess(true);
       } else {
         await api.createFoundItem(formData);
+        setSuccess(true);
+        setTimeout(() => {
+          navigate('/');
+        }, 2000);
       }
-
-      setSuccess(true);
-      setTimeout(() => {
-        navigate('/');
-      }, 2000);
     } catch (err) {
       setSubmitError(err.message || 'Failed to submit report. Please try again.');
     } finally {
@@ -207,6 +218,16 @@ const ReportItem = () => {
       Object.keys(errors).length === 0 &&
       !imageError
     );
+  };
+
+  // Mark a suggested pair as not relevant (per-user, persisted)
+  const handleDismissMatch = async (match) => {
+    try {
+      await api.dismissMatch(match.pairKey);
+      setTopMatches((prev) => prev.filter((m) => m.pairKey !== match.pairKey));
+    } catch (err) {
+      console.error('Error dismissing match:', err);
+    }
   };
 
   // Max date attribute value helper (today in YYYY-MM-DD format)
@@ -281,9 +302,115 @@ const ReportItem = () => {
             <h3 style={{ fontSize: '1.5rem', fontWeight: '800', color: 'var(--color-success)', marginBottom: '8px' }}>
               Report Successfully Created!
             </h3>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.92rem' }}>
-              Your {reportType} item report has been published. Redirecting to Feed Dashboard...
-            </p>
+
+            {reportType === 'lost' ? (
+              <>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.92rem', marginBottom: '24px' }}>
+                  Your lost item report has been published.
+                  {topMatches.length > 0
+                    ? ` We found ${topMatches.length} possible match${topMatches.length === 1 ? '' : 'es'} for you:`
+                    : ' No possible matches above the display threshold yet — we will keep looking!'}
+                </p>
+
+                {topMatches.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', textAlign: 'left', marginBottom: '24px' }}>
+                    {topMatches.map((match) => (
+                      <div
+                        key={match.pairKey}
+                        style={{
+                          border: '1px solid var(--glass-border)',
+                          borderRadius: 'var(--radius-md)',
+                          padding: '14px 16px',
+                          background: 'var(--bg-secondary)',
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', marginBottom: '6px' }}>
+                          <div>
+                            <h4 style={{ fontSize: '1rem', fontWeight: '700', color: 'var(--text-primary)', marginBottom: '4px' }}>
+                              {match.foundItem.itemName}
+                            </h4>
+                            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                              📍 {match.foundItem.foundLocation} &nbsp;·&nbsp; 📅 {new Date(match.foundItem.dateFound).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                            </p>
+                          </div>
+                          <span
+                            style={{
+                              flexShrink: 0,
+                              background: 'var(--accent-gradient)',
+                              color: '#ffffff',
+                              fontWeight: '800',
+                              fontSize: '0.82rem',
+                              padding: '5px 11px',
+                              borderRadius: '999px',
+                            }}
+                          >
+                            {match.score} pts
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                          {match.reasons.map((reason) => (
+                            <span
+                              key={reason}
+                              style={{
+                                fontSize: '0.7rem',
+                                fontWeight: '700',
+                                padding: '3px 9px',
+                                borderRadius: '999px',
+                                background: 'var(--glass-bg)',
+                                border: '1px solid var(--glass-border)',
+                                color: 'var(--text-secondary)',
+                              }}
+                            >
+                              {formatReason(reason)}
+                          </span>
+                        ))}
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '8px' }}>
+                          <button
+                            type="button"
+                            onClick={() => handleDismissMatch(match)}
+                            style={{
+                              background: 'transparent',
+                              border: '1px solid var(--glass-border)',
+                              borderRadius: 'var(--radius-md)',
+                              color: 'var(--text-tertiary)',
+                              fontSize: '0.72rem',
+                              fontWeight: '600',
+                              padding: '4px 10px',
+                              cursor: 'pointer',
+                              transition: 'var(--transition-fast)',
+                            }}
+                            onMouseOver={(e) => {
+                              e.currentTarget.style.color = 'var(--color-danger)';
+                              e.currentTarget.style.borderColor = 'var(--color-danger)';
+                            }}
+                            onMouseOut={(e) => {
+                              e.currentTarget.style.color = 'var(--text-tertiary)';
+                              e.currentTarget.style.borderColor = 'var(--glass-border)';
+                            }}
+                          >
+                            🚫 Not relevant
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  style={{ padding: '12px 28px' }}
+                  onClick={() => navigate('/')}
+                >
+                  Go to Feed Dashboard
+                </button>
+              </>
+            ) : (
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.92rem' }}>
+                Your {reportType} item report has been published. Redirecting to Feed Dashboard...
+              </p>
+            )}
           </div>
         ) : (
           <form onSubmit={handleSubmit}>

@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
+import { formatReason } from '../utils/matchAssist';
 import MetricCard from '../components/MetricCard';
 import ItemCard from '../components/ItemCard';
 import GlassCard from '../components/GlassCard';
+import ClaimModal from '../components/ClaimModal';
 
 const CATEGORIES = [
   'All',
@@ -31,14 +33,13 @@ const Dashboard = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
 
-  // Claim Modal States
+  // Claim Modal States (shared ClaimModal handles the form internally)
   const [selectedItem, setSelectedItem] = useState(null);
-  const [claimForm, setClaimForm] = useState({ claimReason: '', proofDetails: '', studentIdProvided: '' });
-  const [claimErrors, setClaimErrors] = useState({});
-  const [claimTouched, setClaimTouched] = useState({});
-  const [claimSuccess, setClaimSuccess] = useState(false);
-  const [claimSubmitError, setClaimSubmitError] = useState(null);
-  const [claiming, setClaiming] = useState(false);
+
+  // Possible Matches states
+  const [matchCounts, setMatchCounts] = useState({});
+  const [matchPanel, setMatchPanel] = useState(null); // { lostItem, matches }
+  const [matchLoading, setMatchLoading] = useState(false);
 
   // Fetch Items
   const fetchData = async () => {
@@ -50,6 +51,19 @@ const Dashboard = () => {
       ]);
       setLostItems(lost.items || lost);
       setFoundItems(found.items || found);
+
+      // Fetch possible-match counts for all active lost items (badges)
+      const activeLostIds = (lost.items || lost)
+        .filter((i) => i.status === 'active')
+        .map((i) => i._id);
+      if (activeLostIds.length > 0) {
+        try {
+          const summary = await api.getMatchSummary(activeLostIds);
+          setMatchCounts(summary.counts || {});
+        } catch (err) {
+          console.error('Error fetching match summary:', err);
+        }
+      }
     } catch (err) {
       console.error('Error fetching dashboard items:', err);
     } finally {
@@ -103,84 +117,60 @@ const Dashboard = () => {
   // ─── CLAIM SUBMISSION MODAL LOGIC ────────────────────────────────
   const handleOpenClaimModal = (item) => {
     setSelectedItem(item);
-    setClaimForm({ claimReason: '', proofDetails: '', studentIdProvided: user?.studentId || '' });
-    setClaimErrors({});
-    setClaimTouched({});
-    setClaimSuccess(false);
-    setClaimSubmitError(null);
   };
 
   const handleCloseClaimModal = () => {
     setSelectedItem(null);
   };
 
-  // Real-time claim validation
-  const validateClaim = (form) => {
-    const errors = {};
-    if (!form.claimReason) {
-      errors.claimReason = 'Claim reason is required';
-    } else if (form.claimReason.trim().length < 10) {
-      errors.claimReason = 'Claim reason/proof must be at least 10 characters';
-    }
-    return errors;
-  };
-
-  const handleClaimInputChange = (e) => {
-    const { name, value } = e.target;
-    const updatedForm = { ...claimForm, [name]: value };
-    setClaimForm(updatedForm);
-    if (claimTouched[name]) {
-      setClaimErrors(validateClaim(updatedForm));
+  // Update item status locally after a successful claim
+  const handleClaimSuccess = (claimedItem) => {
+    if (feedType === 'found') {
+      setFoundItems(prev => prev.map(item =>
+        item._id === claimedItem._id ? { ...item, status: 'claimed' } : item
+      ));
+    } else {
+      setLostItems(prev => prev.map(item =>
+        item._id === claimedItem._id ? { ...item, status: 'matched' } : item
+      ));
     }
   };
 
-  const handleClaimBlur = (e) => {
-    const { name } = e.target;
-    const updatedTouched = { ...claimTouched, [name]: true };
-    setClaimTouched(updatedTouched);
-    setClaimErrors(validateClaim(claimForm));
-  };
-
-  const handleClaimSubmit = async (e) => {
-    e.preventDefault();
-    setClaimTouched({ claimReason: true, proofDetails: true, studentIdProvided: true });
-    
-    const errors = validateClaim(claimForm);
-    setClaimErrors(errors);
-    if (Object.keys(errors).length > 0) return;
-
-    setClaiming(true);
-    setClaimSubmitError(null);
-
+  // ─── POSSIBLE MATCHES PANEL LOGIC ────────────────────────────────
+  const handleOpenMatchPanel = async (item) => {
+    setMatchPanel({ lostItem: item, matches: [] });
+    setMatchLoading(true);
     try {
-      await api.submitClaim({
-        itemId: selectedItem._id,
-        itemType: feedType === 'lost' ? 'LostItem' : 'FoundItem',
-        claimReason: claimForm.claimReason,
-        proofDetails: claimForm.proofDetails,
-        studentIdProvided: claimForm.studentIdProvided
-      });
-      setClaimSuccess(true);
-      
-      // Update item status locally in state
-      if (feedType === 'found') {
-        setFoundItems(prev => prev.map(item => 
-          item._id === selectedItem._id ? { ...item, status: 'claimed' } : item
-        ));
-      } else {
-        setLostItems(prev => prev.map(item => 
-          item._id === selectedItem._id ? { ...item, status: 'matched' } : item
-        ));
-      }
-
-      // Automatically close modal after success
-      setTimeout(() => {
-        handleCloseClaimModal();
-      }, 2000);
+      const data = await api.getMatchesForLostItem(item._id);
+      setMatchPanel({ lostItem: item, matches: data.matches || [] });
     } catch (err) {
-      setClaimSubmitError(err.message || 'Submission failed');
+      console.error('Error fetching possible matches:', err);
+      setMatchPanel(null);
     } finally {
-      setClaiming(false);
+      setMatchLoading(false);
+    }
+  };
+
+  const handleCloseMatchPanel = () => {
+    setMatchPanel(null);
+  };
+
+  // Mark a candidate pair as not relevant (per-user, persisted)
+  const handleDismissMatch = async (match) => {
+    try {
+      await api.dismissMatch(match.pairKey);
+      setMatchPanel((prev) =>
+        prev
+          ? { ...prev, matches: prev.matches.filter((m) => m.pairKey !== match.pairKey) }
+          : prev
+      );
+      setMatchCounts((prev) => {
+        const lostId = match.pairKey.split('__')[0];
+        const current = prev[lostId] || 0;
+        return { ...prev, [lostId]: Math.max(0, current - 1) };
+      });
+    } catch (err) {
+      console.error('Error dismissing match:', err);
     }
   };
 
@@ -354,6 +344,8 @@ const Dashboard = () => {
                   type={feedType}
                   currentUserId={user?._id}
                   onActionClick={handleOpenClaimModal}
+                  matchCount={feedType === 'lost' ? matchCounts[item._id] : undefined}
+                  onMatchClick={feedType === 'lost' ? handleOpenMatchPanel : undefined}
                 />
               ))}
             </div>
@@ -361,8 +353,8 @@ const Dashboard = () => {
         </section>
       </div>
 
-      {/* ─── CLAIM SUBMISSION OVERLAY MODAL ───────────────────────────── */}
-      {selectedItem && (
+      {/* ─── POSSIBLE MATCHES OVERLAY PANEL ─────────────────────────── */}
+      {matchPanel && (
         <div
           style={{
             position: 'fixed',
@@ -378,22 +370,23 @@ const Dashboard = () => {
             justifyContent: 'center',
             padding: '24px',
           }}
-          onClick={handleCloseClaimModal}
+          onClick={handleCloseMatchPanel}
         >
           <GlassCard
             style={{
               width: '100%',
-              maxWidth: '540px',
+              maxWidth: '580px',
               padding: '32px',
               position: 'relative',
               boxShadow: '0 20px 50px rgba(0, 0, 0, 0.3)',
               background: 'var(--glass-modal-bg)',
+              maxHeight: '80vh',
+              overflowY: 'auto',
             }}
-            onClick={(e) => e.stopPropagation()} // Prevent close on card click
+            onClick={(e) => e.stopPropagation()}
           >
-            {/* Close Button */}
             <button
-              onClick={handleCloseClaimModal}
+              onClick={handleCloseMatchPanel}
               style={{
                 position: 'absolute',
                 top: '20px',
@@ -411,91 +404,119 @@ const Dashboard = () => {
               ✕
             </button>
 
-            {claimSuccess ? (
-              <div style={{ textAlign: 'center', padding: '24px 0' }}>
-                <span style={{ fontSize: '3.5rem', display: 'block', marginBottom: '16px', animation: 'scaleUp 0.3s ease-out' }}>🎉</span>
-                <h3 style={{ fontSize: '1.5rem', fontWeight: '800', color: 'var(--color-success)', marginBottom: '8px' }}>
-                  Claim Submitted Successfully!
-                </h3>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.92rem' }}>
-                  Your claim has been recorded. Administrators will verify the proof and contact you. Redirecting...
-                </p>
+            <h3 style={{ fontSize: '1.4rem', fontWeight: '800', marginBottom: '6px', color: 'var(--text-primary)' }}>
+              🔗 Possible Matches
+            </h3>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '24px' }}>
+              Found items that may match your lost report: <strong style={{ color: 'var(--text-primary)' }}>{matchPanel.lostItem.itemName}</strong>
+            </p>
+
+            {matchLoading ? (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '32px 0', gap: '12px' }}>
+                <div style={{ width: '36px', height: '36px', border: '3px solid var(--glass-border)', borderTop: '3px solid var(--accent-primary)', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem' }}>Scoring candidates...</p>
               </div>
+            ) : matchPanel.matches.length === 0 ? (
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', textAlign: 'center', padding: '24px 0' }}>
+                No possible matches above the display threshold yet.
+              </p>
             ) : (
-              <form onSubmit={handleClaimSubmit}>
-                <h3 style={{ fontSize: '1.4rem', fontWeight: '800', marginBottom: '6px', color: 'var(--text-primary)' }}>
-                  Submit Ownership Claim
-                </h3>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '24px' }}>
-                  Item: <strong style={{ color: 'var(--text-primary)' }}>{selectedItem.itemName}</strong> ({selectedItem.category})
-                </p>
-
-                {claimSubmitError && (
-                  <div style={{ background: 'var(--color-danger-bg)', color: 'var(--color-danger)', border: '1px solid var(--color-danger)', padding: '10px 14px', borderRadius: 'var(--radius-md)', fontSize: '0.85rem', fontWeight: '600', marginBottom: '18px' }}>
-                    ⚠️ {claimSubmitError}
-                  </div>
-                )}
-
-                <div className="input-group">
-                  <label className="input-label">Reason for Claim (Proof of Ownership) *</label>
-                  <textarea
-                    name="claimReason"
-                    value={claimForm.claimReason}
-                    onChange={handleClaimInputChange}
-                    onBlur={handleClaimBlur}
-                    rows="3"
-                    className={`input-field ${claimTouched.claimReason && claimErrors.claimReason ? 'error' : claimTouched.claimReason && !claimErrors.claimReason ? 'success' : ''}`}
-                    placeholder="Describe exactly when and where you lost it, brand name, distinctive marks, lockscreen passwords, contents etc."
-                    style={{ resize: 'none', height: '90px' }}
-                    required
-                  />
-                  {claimTouched.claimReason && claimErrors.claimReason && (
-                    <span className="validation-msg error">{claimErrors.claimReason}</span>
-                  )}
-                </div>
-
-                <div className="input-group">
-                  <label className="input-label">Additional Serial Number / Proof Details (Optional)</label>
-                  <input
-                    type="text"
-                    name="proofDetails"
-                    value={claimForm.proofDetails}
-                    onChange={handleClaimInputChange}
-                    className="input-field"
-                    placeholder="e.g. Serial: WH-10023, keys labeled 'Hostel A'"
-                  />
-                </div>
-
-                <div className="input-group" style={{ marginBottom: '28px' }}>
-                  <label className="input-label">Verified Student ID *</label>
-                  <input
-                    type="text"
-                    name="studentIdProvided"
-                    value={claimForm.studentIdProvided}
-                    onChange={handleClaimInputChange}
-                    className="input-field"
-                    placeholder="Confirm your Student ID card number"
-                    required
-                  />
-                </div>
-
-                <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
-                  <button type="button" className="btn btn-secondary" onClick={handleCloseClaimModal} style={{ padding: '10px 18px' }}>
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="btn btn-primary"
-                    style={{ padding: '10px 24px' }}
-                    disabled={claiming || !claimForm.claimReason || Object.keys(claimErrors).length > 0}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                {matchPanel.matches.map((match) => (
+                  <div
+                    key={match.pairKey}
+                    style={{
+                      border: '1px solid var(--glass-border)',
+                      borderRadius: 'var(--radius-md)',
+                      padding: '16px',
+                      background: 'var(--bg-secondary)',
+                    }}
                   >
-                    {claiming ? 'Submitting...' : 'Submit Claim'}
-                  </button>
-                </div>
-              </form>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', marginBottom: '8px' }}>
+                      <div>
+                        <h4 style={{ fontSize: '1.05rem', fontWeight: '700', color: 'var(--text-primary)', marginBottom: '4px' }}>
+                          {match.foundItem.itemName}
+                        </h4>
+                        <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                          📍 {match.foundItem.foundLocation} &nbsp;·&nbsp; 📅 {new Date(match.foundItem.dateFound).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                        </p>
+                      </div>
+                      <span
+                        style={{
+                          flexShrink: 0,
+                          background: 'var(--accent-gradient)',
+                          color: '#ffffff',
+                          fontWeight: '800',
+                          fontSize: '0.85rem',
+                          padding: '6px 12px',
+                          borderRadius: '999px',
+                        }}
+                      >
+                        {match.score} pts
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                      {match.reasons.map((reason) => (
+                        <span
+                          key={reason}
+                          style={{
+                            fontSize: '0.72rem',
+                            fontWeight: '700',
+                            padding: '4px 10px',
+                            borderRadius: '999px',
+                            background: 'var(--glass-bg)',
+                            border: '1px solid var(--glass-border)',
+                            color: 'var(--text-secondary)',
+                          }}
+                        >
+                          {formatReason(reason)}
+                        </span>
+                      ))}
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '10px' }}>
+                      <button
+                        type="button"
+                        onClick={() => handleDismissMatch(match)}
+                        style={{
+                          background: 'transparent',
+                          border: '1px solid var(--glass-border)',
+                          borderRadius: 'var(--radius-md)',
+                          color: 'var(--text-tertiary)',
+                          fontSize: '0.75rem',
+                          fontWeight: '600',
+                          padding: '5px 12px',
+                          cursor: 'pointer',
+                          transition: 'var(--transition-fast)',
+                        }}
+                        onMouseOver={(e) => {
+                          e.currentTarget.style.color = 'var(--color-danger)';
+                          e.currentTarget.style.borderColor = 'var(--color-danger)';
+                        }}
+                        onMouseOut={(e) => {
+                          e.currentTarget.style.color = 'var(--text-tertiary)';
+                          e.currentTarget.style.borderColor = 'var(--glass-border)';
+                        }}
+                      >
+                        🚫 Not relevant
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             )}
           </GlassCard>
         </div>
+      )}
+
+      {/* ─── CLAIM SUBMISSION OVERLAY MODAL (shared component) ────────── */}
+      {selectedItem && (
+        <ClaimModal
+          item={selectedItem}
+          itemType={feedType === 'lost' ? 'LostItem' : 'FoundItem'}
+          defaultStudentId={user?.studentId || ''}
+          onClose={handleCloseClaimModal}
+          onSuccess={handleClaimSuccess}
+        />
       )}
 
       <style>

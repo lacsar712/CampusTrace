@@ -24,7 +24,7 @@ const getCategorySvg = (category) => {
   );
 };
 
-const ItemCard = ({ item, type = 'lost', onActionClick, currentUserId }) => {
+const ItemCard = ({ item, type = 'lost', onActionClick, currentUserId, matchCount, onMatchClick }) => {
   const isOwner = type === 'lost' ? item.ownerId === currentUserId : item.finderId === currentUserId;
   
   const formattedDate = new Date(item.dateLost || item.dateFound).toLocaleDateString(undefined, {
@@ -188,6 +188,37 @@ const ItemCard = ({ item, type = 'lost', onActionClick, currentUserId }) => {
             disabled={item.status !== 'active' && item.status !== 'available'}
           >
             {isOwner ? 'My Report' : type === 'lost' ? 'Matches My Found' : 'Claim This Item'}
+          </button>
+        )}
+
+        {/* Possible Matches badge (active lost items only) */}
+        {type === 'lost' && item.status === 'active' && matchCount !== undefined && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (matchCount > 0 && onMatchClick) onMatchClick(item);
+            }}
+            disabled={!matchCount}
+            style={{
+              width: '100%',
+              marginTop: '10px',
+              padding: '8px 10px',
+              borderRadius: 'var(--radius-md)',
+              border: '1px solid var(--glass-border)',
+              background: matchCount > 0 ? 'var(--color-success-bg)' : 'var(--bg-secondary)',
+              color: matchCount > 0 ? 'var(--color-success)' : 'var(--text-tertiary)',
+              fontWeight: '700',
+              fontSize: '0.8rem',
+              cursor: matchCount > 0 ? 'pointer' : 'default',
+              transition: 'var(--transition-fast)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+            }}
+          >
+            🔗 Possible Matches: {matchCount}
           </button>
         )}
       </div>

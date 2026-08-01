@@ -59,4 +59,13 @@ export const api = {
   getAllClaims: (status) => request(`/claims${status ? `?status=${status}` : ''}`),
   reviewClaim: (id, data) => request(`/claims/${id}/review`, { method: 'PUT', body: JSON.stringify(data) }),
   markReturned: (id) => request(`/claims/${id}/return`, { method: 'PUT' }),
+
+  // Possible Matches
+  getMatchesForLostItem: (lostItemId) => request(`/match/lost/${lostItemId}`),
+  getMatchSummary: (lostIds) => request('/match/summary', { method: 'POST', body: JSON.stringify({ lostIds }) }),
+  dismissMatch: (pairKey) => request('/match/dismiss', { method: 'POST', body: JSON.stringify({ pairKey }) }),
+  undismissMatch: (pairKey) => request(`/match/dismiss/${pairKey}`, { method: 'DELETE' }),
+  getMatchSuggestions: () => request('/match/suggestions'),
+  getMatchConflicts: (foundItemId) => request(`/match/conflicts/${foundItemId}`),
+  getHighScorePairs: () => request('/match/high-score-pairs'),
 };

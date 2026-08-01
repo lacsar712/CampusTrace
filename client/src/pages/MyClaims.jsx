@@ -1,24 +1,64 @@
 import { useState, useEffect } from 'react';
 import { api } from '../services/api';
+import { useAuth } from '../context/AuthContext';
+import { formatReason } from '../utils/matchAssist';
 import GlassCard from '../components/GlassCard';
+import ClaimModal from '../components/ClaimModal';
 
 const MyClaims = () => {
+  const { user } = useAuth();
   const [claims, setClaims] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // Suggested from Matches states
+  const [suggestions, setSuggestions] = useState([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(true);
+  const [claimTarget, setClaimTarget] = useState(null); // suggestion being claimed
+
+  const fetchClaims = async () => {
+    try {
+      const data = await api.getMyClaims();
+      setClaims(data);
+    } catch (err) {
+      console.error('Error fetching user claims:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchSuggestions = async () => {
+    try {
+      const data = await api.getMatchSuggestions();
+      setSuggestions(data.suggestions || []);
+    } catch (err) {
+      console.error('Error fetching match suggestions:', err);
+    } finally {
+      setSuggestionsLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const fetchClaims = async () => {
-      try {
-        const data = await api.getMyClaims();
-        setClaims(data);
-      } catch (err) {
-        console.error('Error fetching user claims:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchClaims();
+    fetchSuggestions();
   }, []);
+
+  // Mark a suggested pair as not relevant (per-user, persisted)
+  const handleDismissSuggestion = async (suggestion) => {
+    try {
+      await api.dismissMatch(suggestion.pairKey);
+      setSuggestions((prev) => prev.filter((s) => s.pairKey !== suggestion.pairKey));
+    } catch (err) {
+      console.error('Error dismissing suggestion:', err);
+    }
+  };
+
+  // After a successful claim, drop the suggestion and refresh the claims list
+  const handleSuggestionClaimSuccess = () => {
+    if (claimTarget) {
+      setSuggestions((prev) => prev.filter((s) => s.pairKey !== claimTarget.pairKey));
+    }
+    fetchClaims();
+  };
 
   const getStatusEmoji = (status) => {
     if (status === 'approved') return '✅';
@@ -35,6 +75,114 @@ const MyClaims = () => {
         <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem' }}>
           Track the status of ownership requests submitted for found or lost items.
         </p>
+      </div>
+
+      {/* ─── SUGGESTED FROM MATCHES SECTION ──────────────────────────── */}
+      <div style={{ marginBottom: '40px' }}>
+        <h2 style={{ fontSize: '1.3rem', fontWeight: '800', color: 'var(--text-primary)', marginBottom: '6px' }}>
+          ✨ Suggested from Matches
+        </h2>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '16px' }}>
+          Found items that may belong to you, based on your active lost reports.
+        </p>
+
+        {suggestionsLoading ? (
+          <GlassCard style={{ padding: '24px', textAlign: 'center' }}>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem' }}>Scoring possible matches...</p>
+          </GlassCard>
+        ) : suggestions.length === 0 ? (
+          <GlassCard style={{ padding: '24px', textAlign: 'center' }}>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem' }}>
+              No suggestions right now. Publish a lost report and we will surface matching found items here.
+            </p>
+          </GlassCard>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {suggestions.map((suggestion) => (
+              <GlassCard key={suggestion.pairKey} style={{ padding: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' }}>
+                  <div style={{ flexGrow: 1, minWidth: '240px' }}>
+                    <p style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', fontWeight: '700', textTransform: 'uppercase', marginBottom: '6px' }}>
+                      For your lost report: {suggestion.lostItem.itemName}
+                    </p>
+                    <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: 'var(--text-primary)', marginBottom: '4px' }}>
+                      {suggestion.foundItem.itemName}
+                    </h3>
+                    <p style={{ fontSize: '0.84rem', color: 'var(--text-secondary)', marginBottom: '10px' }}>
+                      📍 {suggestion.foundItem.foundLocation} &nbsp;·&nbsp; 📅 {new Date(suggestion.foundItem.dateFound).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                    </p>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                      {suggestion.reasons.map((reason) => (
+                        <span
+                          key={reason}
+                          style={{
+                            fontSize: '0.72rem',
+                            fontWeight: '700',
+                            padding: '4px 10px',
+                            borderRadius: '999px',
+                            background: 'var(--glass-bg)',
+                            border: '1px solid var(--glass-border)',
+                            color: 'var(--text-secondary)',
+                          }}
+                        >
+                          {formatReason(reason)}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '10px', flexShrink: 0 }}>
+                    <span
+                      style={{
+                        background: 'var(--accent-gradient)',
+                        color: '#ffffff',
+                        fontWeight: '800',
+                        fontSize: '0.85rem',
+                        padding: '6px 12px',
+                        borderRadius: '999px',
+                      }}
+                    >
+                      {suggestion.score} pts
+                    </span>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      style={{ padding: '8px 18px', fontSize: '0.85rem' }}
+                      onClick={() => setClaimTarget(suggestion)}
+                    >
+                      Claim This Item
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDismissSuggestion(suggestion)}
+                      style={{
+                        background: 'transparent',
+                        border: '1px solid var(--glass-border)',
+                        borderRadius: 'var(--radius-md)',
+                        color: 'var(--text-tertiary)',
+                        fontSize: '0.75rem',
+                        fontWeight: '600',
+                        padding: '5px 12px',
+                        cursor: 'pointer',
+                        transition: 'var(--transition-fast)',
+                      }}
+                      onMouseOver={(e) => {
+                        e.currentTarget.style.color = 'var(--color-danger)';
+                        e.currentTarget.style.borderColor = 'var(--color-danger)';
+                      }}
+                      onMouseOut={(e) => {
+                        e.currentTarget.style.color = 'var(--text-tertiary)';
+                        e.currentTarget.style.borderColor = 'var(--glass-border)';
+                      }}
+                    >
+                      🚫 Not relevant
+                    </button>
+                  </div>
+                </div>
+              </GlassCard>
+            ))}
+          </div>
+        )}
       </div>
 
       {loading ? (
@@ -178,6 +326,17 @@ const MyClaims = () => {
             </GlassCard>
           ))}
         </div>
+      )}
+
+      {/* Claim modal reuses the shared claim flow (submitClaim API) */}
+      {claimTarget && (
+        <ClaimModal
+          item={claimTarget.foundItem}
+          itemType="FoundItem"
+          defaultStudentId={user?.studentId || ''}
+          onClose={() => setClaimTarget(null)}
+          onSuccess={handleSuggestionClaimSuccess}
+        />
       )}
 
       <style>

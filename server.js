@@ -17,6 +17,7 @@ const lostRoutes = require('./routes/lostRoutes');
 const foundRoutes = require('./routes/foundRoutes');
 const claimRoutes = require('./routes/claimRoutes');
 const adminRoutes = require('./routes/adminRoutes');
+const matchRoutes = require('./routes/matchRoutes');
 
 const app = express();
 
@@ -46,6 +47,7 @@ app.use('/api/lost', lostRoutes);
 app.use('/api/found', foundRoutes);
 app.use('/api/claims', claimRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/match', matchRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
