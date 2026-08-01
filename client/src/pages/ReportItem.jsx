@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
 import GlassCard from '../components/GlassCard';
+import MatchList from '../components/MatchList';
 
 const CATEGORIES = [
   'Electronics',
@@ -39,6 +40,19 @@ const ReportItem = () => {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [success, setSuccess] = useState(false);
+
+  // Top-3 possible matches shown after a successful Lost report.
+  const [topMatches, setTopMatches] = useState([]);
+
+  // Remove a candidate from the Top 3 after the user marks it "Not relevant".
+  const handleDismissTopMatch = async (match) => {
+    try {
+      await api.dismissMatch(match.lostItemId, match.foundItemId);
+      setTopMatches((prev) => prev.filter((m) => m.pairKey !== match.pairKey));
+    } catch (err) {
+      console.error('Error dismissing match:', err);
+    }
+  };
 
   const validateForm = () => {
     const newErrors = {};
@@ -182,15 +196,24 @@ const ReportItem = () => {
 
     try {
       if (reportType === 'lost') {
-        await api.createLostItem(formData);
+        const created = await api.createLostItem(formData);
+        setSuccess(true);
+
+        // Surface the Top 3 possible found-item matches for this new lost report.
+        try {
+          const data = await api.getMatchesForLost(created._id);
+          setTopMatches((data.matches || []).slice(0, 3));
+        } catch (matchErr) {
+          console.error('Error fetching matches for new lost item:', matchErr);
+        }
+        // No auto-redirect for lost items so the user can review the matches.
       } else {
         await api.createFoundItem(formData);
+        setSuccess(true);
+        setTimeout(() => {
+          navigate('/');
+        }, 2000);
       }
-
-      setSuccess(true);
-      setTimeout(() => {
-        navigate('/');
-      }, 2000);
     } catch (err) {
       setSubmitError(err.message || 'Failed to submit report. Please try again.');
     } finally {
@@ -276,14 +299,38 @@ const ReportItem = () => {
         </div>
 
         {success ? (
-          <div style={{ textAlign: 'center', padding: '40px 0' }}>
-            <span style={{ fontSize: '4rem', display: 'block', marginBottom: '16px', animation: 'scaleUp 0.3s ease-out' }}>🎉</span>
-            <h3 style={{ fontSize: '1.5rem', fontWeight: '800', color: 'var(--color-success)', marginBottom: '8px' }}>
-              Report Successfully Created!
-            </h3>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.92rem' }}>
-              Your {reportType} item report has been published. Redirecting to Feed Dashboard...
-            </p>
+          <div style={{ padding: '24px 0' }}>
+            <div style={{ textAlign: 'center', marginBottom: reportType === 'lost' ? '28px' : '0' }}>
+              <span style={{ fontSize: '4rem', display: 'block', marginBottom: '16px', animation: 'scaleUp 0.3s ease-out' }}>🎉</span>
+              <h3 style={{ fontSize: '1.5rem', fontWeight: '800', color: 'var(--color-success)', marginBottom: '8px' }}>
+                Report Successfully Created!
+              </h3>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.92rem' }}>
+                {reportType === 'lost'
+                  ? 'Your lost item report has been published. Here are the found items that may match it:'
+                  : 'Your found item report has been published. Redirecting to Feed Dashboard...'}
+              </p>
+            </div>
+
+            {reportType === 'lost' && (
+              <div style={{ textAlign: 'left' }}>
+                <h4 style={{ fontSize: '0.82rem', fontWeight: '800', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: '12px', letterSpacing: '0.5px' }}>
+                  ✨ Top Possible Matches
+                </h4>
+                <MatchList
+                  matches={topMatches}
+                  onDismiss={handleDismissTopMatch}
+                  emptyText="No found items currently meet the match threshold. We'll keep this report active in the feed."
+                />
+                <button
+                  className="btn btn-primary"
+                  style={{ width: '100%', padding: '12px', marginTop: '20px' }}
+                  onClick={() => navigate('/')}
+                >
+                  Go to Feed Dashboard
+                </button>
+              </div>
+            )}
           </div>
         ) : (
           <form onSubmit={handleSubmit}>
