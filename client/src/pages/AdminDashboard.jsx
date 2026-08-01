@@ -11,6 +11,10 @@ const AdminDashboard = () => {
   const [actionError, setActionError] = useState(null);
   const [actionSuccessMsg, setActionSuccessMsg] = useState(null);
 
+  // Read-only high-score match pairs (score >= 80, lost active, found available).
+  const [highPairs, setHighPairs] = useState([]);
+  const [highPairsLoading, setHighPairsLoading] = useState(true);
+
   const fetchAllClaims = async () => {
     try {
       const data = await api.getAllClaims();
@@ -23,9 +27,22 @@ const AdminDashboard = () => {
     }
   };
 
+  const fetchHighPairs = async () => {
+    setHighPairsLoading(true);
+    try {
+      const data = await api.getHighScorePairs();
+      setHighPairs(data.pairs || []);
+    } catch (err) {
+      console.error('Error fetching high-score pairs:', err);
+    } finally {
+      setHighPairsLoading(false);
+    }
+  };
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchAllClaims();
+    fetchHighPairs();
   }, []);
 
   const handleCommentChange = (claimId, text) => {
@@ -97,6 +114,68 @@ const AdminDashboard = () => {
           Verify proof of ownership, review submissions, and manage returned items.
         </p>
       </div>
+
+      {/* ─── High-Score Match Pairs (READ-ONLY) ───────────────────────── */}
+      <GlassCard style={{ padding: '24px', marginBottom: '32px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
+          <h2 style={{ fontSize: '1.2rem', fontWeight: '800', color: 'var(--text-primary)' }}>
+            📊 High-Score Match Pairs
+          </h2>
+          {!highPairsLoading && (
+            <span style={{ background: 'var(--accent-gradient)', color: '#fff', fontSize: '0.72rem', fontWeight: '800', padding: '2px 10px', borderRadius: '999px' }}>
+              {highPairs.length}
+            </span>
+          )}
+          <span style={{ fontSize: '0.7rem', fontWeight: '700', color: 'var(--text-tertiary)', textTransform: 'uppercase', border: '1px solid var(--glass-border)', padding: '2px 8px', borderRadius: '6px' }}>
+            Read-only
+          </span>
+        </div>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.86rem', marginBottom: '18px' }}>
+          All active lost × available found pairs with a match score of 80 or higher, ranked by score. Informational only — this list does not change any claim status.
+        </p>
+
+        {highPairsLoading ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 0' }}>
+            <div style={{ width: '28px', height: '28px', border: '3px solid var(--glass-border)', borderTop: '3px solid var(--accent-primary)', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+            <span style={{ color: 'var(--text-secondary)', fontWeight: '500' }}>Scoring pairs...</span>
+          </div>
+        ) : highPairs.length === 0 ? (
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', padding: '8px 0' }}>
+            No pairs currently reach the 80-point high-score threshold.
+          </p>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+              <thead>
+                <tr style={{ textAlign: 'left', color: 'var(--text-tertiary)', textTransform: 'uppercase', fontSize: '0.7rem' }}>
+                  <th style={{ padding: '8px 10px' }}>Lost Item</th>
+                  <th style={{ padding: '8px 10px' }}>Found Item</th>
+                  <th style={{ padding: '8px 10px' }}>Category</th>
+                  <th style={{ padding: '8px 10px' }}>Lost Location</th>
+                  <th style={{ padding: '8px 10px' }}>Found Location</th>
+                  <th style={{ padding: '8px 10px', textAlign: 'right' }}>Score</th>
+                </tr>
+              </thead>
+              <tbody>
+                {highPairs.map((p) => (
+                  <tr key={p.pairKey} style={{ borderTop: '1px solid var(--glass-border)', color: 'var(--text-primary)' }}>
+                    <td style={{ padding: '10px', fontWeight: '600' }}>{p.lostItemName}</td>
+                    <td style={{ padding: '10px', fontWeight: '600' }}>{p.foundItemName}</td>
+                    <td style={{ padding: '10px', color: 'var(--text-secondary)' }}>{p.category}</td>
+                    <td style={{ padding: '10px', color: 'var(--text-secondary)' }}>{p.lostLocation}</td>
+                    <td style={{ padding: '10px', color: 'var(--text-secondary)' }}>{p.foundLocation}</td>
+                    <td style={{ padding: '10px', textAlign: 'right' }}>
+                      <span style={{ background: 'var(--accent-gradient)', color: '#fff', fontSize: '0.78rem', fontWeight: '800', padding: '3px 10px', borderRadius: '999px' }}>
+                        {p.score}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </GlassCard>
 
       {actionError && (
         <div style={{ background: 'var(--color-danger-bg)', color: 'var(--color-danger)', border: '1px solid var(--color-danger)', padding: '12px 16px', borderRadius: 'var(--radius-md)', fontSize: '0.88rem', fontWeight: '600', marginBottom: '24px' }}>

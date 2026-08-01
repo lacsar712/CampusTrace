@@ -24,8 +24,12 @@ const getCategorySvg = (category) => {
   );
 };
 
-const ItemCard = ({ item, type = 'lost', onActionClick, currentUserId }) => {
+const ItemCard = ({ item, type = 'lost', onActionClick, currentUserId, matchCount, onMatchClick }) => {
   const isOwner = type === 'lost' ? item.ownerId === currentUserId : item.finderId === currentUserId;
+
+  // Possible-match badge only makes sense for active lost reports.
+  const showMatchBadge =
+    type === 'lost' && item.status === 'active' && typeof matchCount === 'number' && matchCount > 0;
   
   const formattedDate = new Date(item.dateLost || item.dateFound).toLocaleDateString(undefined, {
     month: 'short',
@@ -81,6 +85,40 @@ const ItemCard = ({ item, type = 'lost', onActionClick, currentUserId }) => {
             {item.status}
           </span>
         </div>
+
+        {/* Possible Matches count badge (active lost items only) */}
+        {showMatchBadge && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              if (onMatchClick) onMatchClick(item);
+            }}
+            title="View possible matching found items"
+            style={{
+              position: 'absolute',
+              top: '12px',
+              left: '12px',
+              zIndex: '3',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '5px',
+              background: 'var(--accent-gradient)',
+              color: '#ffffff',
+              border: 'none',
+              padding: '5px 10px',
+              fontSize: '0.72rem',
+              fontWeight: '800',
+              borderRadius: '999px',
+              cursor: 'pointer',
+              boxShadow: '0 4px 12px rgba(139, 92, 246, 0.35)',
+              transition: 'var(--transition-fast)',
+            }}
+            onMouseOver={(e) => (e.currentTarget.style.transform = 'scale(1.06)')}
+            onMouseOut={(e) => (e.currentTarget.style.transform = 'scale(1)')}
+          >
+            ✨ {matchCount} possible match{matchCount === 1 ? '' : 'es'}
+          </button>
+        )}
 
         {/* Item Type Indicator Tag */}
         <div
