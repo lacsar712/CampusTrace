@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
+import { formatReason } from '../utils/matchAssist';
 import GlassCard from '../components/GlassCard';
 
 const CATEGORIES = [
@@ -39,6 +40,7 @@ const ReportItem = () => {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [success, setSuccess] = useState(false);
+  const [topMatches, setTopMatches] = useState([]);
 
   const validateForm = () => {
     const newErrors = {};
@@ -181,16 +183,28 @@ const ReportItem = () => {
     }
 
     try {
+      let createdId = null;
       if (reportType === 'lost') {
-        await api.createLostItem(formData);
+        const created = await api.createLostItem(formData);
+        createdId = created._id;
       } else {
         await api.createFoundItem(formData);
       }
 
+      if (reportType === 'lost' && createdId) {
+        try {
+          const data = await api.getMatchesForLostItem(createdId);
+          setTopMatches((data.matches || []).slice(0, 3));
+        } catch (matchErr) {
+          console.error('Error fetching post-report matches:', matchErr);
+        }
+      }
+
       setSuccess(true);
+      const redirectDelay = reportType === 'lost' ? 6000 : 2000;
       setTimeout(() => {
         navigate('/');
-      }, 2000);
+      }, redirectDelay);
     } catch (err) {
       setSubmitError(err.message || 'Failed to submit report. Please try again.');
     } finally {
@@ -276,14 +290,91 @@ const ReportItem = () => {
         </div>
 
         {success ? (
-          <div style={{ textAlign: 'center', padding: '40px 0' }}>
-            <span style={{ fontSize: '4rem', display: 'block', marginBottom: '16px', animation: 'scaleUp 0.3s ease-out' }}>🎉</span>
-            <h3 style={{ fontSize: '1.5rem', fontWeight: '800', color: 'var(--color-success)', marginBottom: '8px' }}>
-              Report Successfully Created!
-            </h3>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.92rem' }}>
-              Your {reportType} item report has been published. Redirecting to Feed Dashboard...
-            </p>
+          <div style={{ padding: '20px 0' }}>
+            <div style={{ textAlign: 'center', marginBottom: topMatches.length > 0 ? '24px' : '0' }}>
+              <span style={{ fontSize: '4rem', display: 'block', marginBottom: '16px', animation: 'scaleUp 0.3s ease-out' }}>🎉</span>
+              <h3 style={{ fontSize: '1.5rem', fontWeight: '800', color: 'var(--color-success)', marginBottom: '8px' }}>
+                Report Successfully Created!
+              </h3>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.92rem' }}>
+                Your {reportType} item report has been published. Redirecting to Feed Dashboard...
+              </p>
+            </div>
+
+            {reportType === 'lost' && (
+              <div>
+                <h4 style={{ fontSize: '1rem', fontWeight: '700', color: 'var(--text-primary)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  🔗 Top Possible Matches
+                </h4>
+                {topMatches.length === 0 ? (
+                  <p style={{ color: 'var(--text-tertiary)', fontSize: '0.88rem', fontStyle: 'italic', padding: '12px', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
+                    No possible matches found yet. New found items will be matched automatically.
+                  </p>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {topMatches.map((m) => (
+                      <div
+                        key={m.pairKey}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '14px',
+                          padding: '14px 16px',
+                          borderRadius: 'var(--radius-md)',
+                          border: '1px solid var(--glass-border)',
+                          background: 'var(--bg-secondary)',
+                        }}
+                      >
+                        <div style={{
+                          width: '48px',
+                          height: '48px',
+                          borderRadius: '12px',
+                          background: 'var(--accent-gradient)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          color: '#fff',
+                          fontWeight: '800',
+                          fontSize: '1.1rem',
+                          flexShrink: 0,
+                        }}>
+                          {m.score}
+                        </div>
+                        <div style={{ minWidth: 0, flexGrow: 1 }}>
+                          <div style={{ fontWeight: '700', color: 'var(--text-primary)', fontSize: '0.95rem', marginBottom: '2px' }}>
+                            {m.foundItem.itemName}
+                          </div>
+                          <div style={{ opacity: '0.85', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                            📍 {m.foundItem.foundLocation} • 📅 {new Date(m.foundItem.dateFound).toLocaleDateString()}
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-end', flexShrink: 0 }}>
+                          {m.reasons.map((reason, idx) => {
+                            const isDate = reason.startsWith('dateGap');
+                            const isLocation = reason === 'location' || reason === 'location:exact';
+                            return (
+                              <span
+                                key={idx}
+                                style={{
+                                  padding: '2px 8px',
+                                  borderRadius: '9999px',
+                                  fontSize: '0.68rem',
+                                  fontWeight: '600',
+                                  background: isDate ? 'var(--color-warning-bg)' : isLocation ? 'var(--color-success-bg)' : 'var(--color-info-bg)',
+                                  color: isDate ? 'var(--color-warning)' : isLocation ? 'var(--color-success)' : 'var(--color-info)',
+                                }}
+                              >
+                                {formatReason(reason)}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         ) : (
           <form onSubmit={handleSubmit}>
@@ -374,7 +465,7 @@ const ReportItem = () => {
                   value={form.date}
                   onChange={handleInputChange}
                   onBlur={handleBlur}
-                  max={getTodayString()} // HTML5 future date blocker!
+                  max={getTodayString()}
                   className={`input-field ${touched.date && errors.date ? 'error' : touched.date && !errors.date ? 'success' : ''}`}
                   required
                 />
