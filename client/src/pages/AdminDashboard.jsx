@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../services/api';
+import { formatReason } from '../utils/matchAssist';
 import GlassCard from '../components/GlassCard';
 
 const AdminDashboard = () => {
@@ -10,6 +11,10 @@ const AdminDashboard = () => {
   const [reviews, setReviews] = useState({}); // Stores admin comments per claim ID
   const [actionError, setActionError] = useState(null);
   const [actionSuccessMsg, setActionSuccessMsg] = useState(null);
+
+  // High-score match pairs (read-only)
+  const [highScorePairs, setHighScorePairs] = useState([]);
+  const [pairsLoading, setPairsLoading] = useState(true);
 
   const fetchAllClaims = async () => {
     try {
@@ -27,6 +32,28 @@ const AdminDashboard = () => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchAllClaims();
   }, []);
+
+  useEffect(() => {
+    const fetchHighScorePairs = async () => {
+      try {
+        const data = await api.getHighScorePairs();
+        setHighScorePairs(data.pairs || []);
+      } catch (err) {
+        console.error('Error fetching high-score pairs:', err);
+      } finally {
+        setPairsLoading(false);
+      }
+    };
+    fetchHighScorePairs();
+  }, []);
+
+  const formatPairDate = (dateStr) => {
+    return new Date(dateStr).toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+  };
 
   const handleCommentChange = (claimId, text) => {
     setReviews((prev) => ({ ...prev, [claimId]: text }));
@@ -109,6 +136,95 @@ const AdminDashboard = () => {
           🎉 {actionSuccessMsg}
         </div>
       )}
+
+      {/* ─── HIGH-SCORE MATCH PAIRS (READ-ONLY) ──────────────────── */}
+      <GlassCard style={{ padding: '28px', marginBottom: '32px', borderLeft: '4px solid var(--accent-primary)' }}>
+        <h2 style={{ fontSize: '1.2rem', fontWeight: '800', color: 'var(--text-primary)', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          🔗 High-Score Match Pairs
+        </h2>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '20px' }}>
+          Read-only overview of active lost reports paired with available found items scoring 80 or higher. Sorted by match score descending. This panel does not affect claim moderation.
+        </p>
+
+        {pairsLoading ? (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', gap: '12px' }}>
+            <div style={{ width: '28px', height: '28px', border: '3px solid var(--glass-border)', borderTop: '3px solid var(--accent-primary)', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+            <span style={{ color: 'var(--text-secondary)', fontSize: '0.88rem' }}>Loading high-score pairs...</span>
+          </div>
+        ) : highScorePairs.length === 0 ? (
+          <p style={{ color: 'var(--text-tertiary)', fontSize: '0.88rem', fontStyle: 'italic', padding: '12px', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
+            No high-score match pairs currently in the system.
+          </p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {highScorePairs.map((p) => (
+              <div
+                key={p.pairKey}
+                style={{
+                  padding: '16px',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--glass-border)',
+                  background: 'var(--bg-secondary)',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', marginBottom: '12px' }}>
+                  <div style={{ minWidth: 0, display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: '0.7rem', fontWeight: '700', color: 'var(--color-danger)', textTransform: 'uppercase', marginBottom: '2px' }}>🎒 Lost</div>
+                      <div style={{ fontSize: '0.95rem', fontWeight: '700', color: 'var(--text-primary)' }}>{p.lostItem.itemName}</div>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>📍 {p.lostItem.location}</div>
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: '0.7rem', fontWeight: '700', color: 'var(--color-success)', textTransform: 'uppercase', marginBottom: '2px' }}>🔍 Found</div>
+                      <div style={{ fontSize: '0.95rem', fontWeight: '700', color: 'var(--text-primary)' }}>{p.foundItem.itemName}</div>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>📍 {p.foundItem.foundLocation}</div>
+                    </div>
+                  </div>
+                  <div style={{ flexShrink: 0, textAlign: 'center' }}>
+                    <div style={{
+                      fontSize: '1.6rem',
+                      fontWeight: '800',
+                      background: 'var(--accent-gradient)',
+                      WebkitBackgroundClip: 'text',
+                      WebkitTextFillColor: 'transparent',
+                      lineHeight: '1',
+                    }}>
+                      {p.score}
+                    </div>
+                    <span style={{ fontSize: '0.62rem', color: 'var(--text-tertiary)', fontWeight: '600', textTransform: 'uppercase' }}>score</span>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.72rem', fontWeight: '700', color: 'var(--accent-primary)', textTransform: 'uppercase' }}>
+                    {p.lostItem.category}
+                  </span>
+                  <span style={{ color: 'var(--text-tertiary)' }}>•</span>
+                  {p.reasons.map((reason, idx) => {
+                    const isDate = reason.startsWith('dateGap');
+                    const isLocation = reason === 'location' || reason === 'location:exact';
+                    return (
+                      <span
+                        key={idx}
+                        style={{
+                          padding: '2px 8px',
+                          borderRadius: '9999px',
+                          fontSize: '0.68rem',
+                          fontWeight: '600',
+                          background: isDate ? 'var(--color-warning-bg)' : isLocation ? 'var(--color-success-bg)' : 'var(--color-info-bg)',
+                          color: isDate ? 'var(--color-warning)' : isLocation ? 'var(--color-success)' : 'var(--color-info)',
+                        }}
+                      >
+                        {formatReason(reason)}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </GlassCard>
 
       {loading ? (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '300px', gap: '16px' }}>

@@ -22,6 +22,7 @@ COPY controllers/ ./controllers/
 COPY middleware/ ./middleware/
 COPY models/ ./models/
 COPY routes/ ./routes/
+COPY services/ ./services/
 COPY server.js ./
 COPY scripts/ ./scripts/
 

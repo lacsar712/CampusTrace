@@ -24,7 +24,7 @@ const getCategorySvg = (category) => {
   );
 };
 
-const ItemCard = ({ item, type = 'lost', onActionClick, currentUserId }) => {
+const ItemCard = ({ item, type = 'lost', onActionClick, currentUserId, matchCount = 0, onMatchClick }) => {
   const isOwner = type === 'lost' ? item.ownerId === currentUserId : item.finderId === currentUserId;
   
   const formattedDate = new Date(item.dateLost || item.dateFound).toLocaleDateString(undefined, {
@@ -76,10 +76,38 @@ const ItemCard = ({ item, type = 'lost', onActionClick, currentUserId }) => {
         )}
 
         {/* Dynamic Status Badges */}
-        <div style={{ position: 'absolute', top: '12px', right: '12px', zIndex: '2' }}>
+        <div style={{ position: 'absolute', top: '12px', right: '12px', zIndex: '2', display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-end' }}>
           <span className={`badge badge-${item.status}`}>
             {item.status}
           </span>
+          {type === 'lost' && matchCount > 0 && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (onMatchClick) onMatchClick(item);
+              }}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                padding: '4px 10px',
+                fontSize: '0.72rem',
+                fontWeight: '700',
+                borderRadius: '9999px',
+                border: 'none',
+                cursor: 'pointer',
+                background: 'var(--accent-gradient)',
+                color: '#ffffff',
+                boxShadow: '0 2px 8px rgba(99, 102, 241, 0.35)',
+                transition: 'var(--transition-fast)',
+              }}
+              onMouseOver={(e) => { e.currentTarget.style.transform = 'scale(1.05)'; }}
+              onMouseOut={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+              title="View possible matches"
+            >
+              🔗 {matchCount} match{matchCount > 1 ? 'es' : ''}
+            </button>
+          )}
         </div>
 
         {/* Item Type Indicator Tag */}

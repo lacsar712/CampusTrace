@@ -1,10 +1,16 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
+import { formatReason } from '../utils/matchAssist';
 import GlassCard from '../components/GlassCard';
 
 const MyClaims = () => {
+  const navigate = useNavigate();
   const [claims, setClaims] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  const [suggestions, setSuggestions] = useState([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(true);
 
   useEffect(() => {
     const fetchClaims = async () => {
@@ -20,10 +26,45 @@ const MyClaims = () => {
     fetchClaims();
   }, []);
 
+  useEffect(() => {
+    const fetchSuggestions = async () => {
+      try {
+        const data = await api.getSuggestions();
+        setSuggestions(data.suggestions || []);
+      } catch (err) {
+        console.error('Error fetching match suggestions:', err);
+      } finally {
+        setSuggestionsLoading(false);
+      }
+    };
+    fetchSuggestions();
+  }, []);
+
   const getStatusEmoji = (status) => {
     if (status === 'approved') return '✅';
     if (status === 'rejected') return '❌';
     return '⏳';
+  };
+
+  const handleClaimSuggestion = (foundItem) => {
+    navigate('/', { state: { openClaimItem: foundItem } });
+  };
+
+  const handleIgnoreSuggestion = async (suggestion) => {
+    try {
+      await api.ignoreMatch(suggestion.lostItem._id, suggestion.foundItem._id);
+      setSuggestions((prev) => prev.filter((s) => s.pairKey !== suggestion.pairKey));
+    } catch (err) {
+      console.error('Error ignoring suggestion:', err);
+    }
+  };
+
+  const formatSuggestionDate = (dateStr) => {
+    return new Date(dateStr).toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
   };
 
   return (
@@ -37,6 +78,121 @@ const MyClaims = () => {
         </p>
       </div>
 
+      {/* ─── SUGGESTED FROM MATCHES ──────────────────────────────── */}
+      <GlassCard style={{ padding: '28px', marginBottom: '32px', borderLeft: '4px solid var(--accent-primary)' }}>
+        <h2 style={{ fontSize: '1.2rem', fontWeight: '800', color: 'var(--text-primary)', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          🔗 Suggested from Matches
+        </h2>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '20px' }}>
+          Found items that may correspond to your active lost reports. Claim one to start the verification process.
+        </p>
+
+        {suggestionsLoading ? (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', gap: '12px' }}>
+            <div style={{ width: '28px', height: '28px', border: '3px solid var(--glass-border)', borderTop: '3px solid var(--accent-primary)', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+            <span style={{ color: 'var(--text-secondary)', fontSize: '0.88rem' }}>Loading suggestions...</span>
+          </div>
+        ) : suggestions.length === 0 ? (
+          <p style={{ color: 'var(--text-tertiary)', fontSize: '0.88rem', fontStyle: 'italic', padding: '12px', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
+            No match suggestions right now. New found items will appear here automatically.
+          </p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {suggestions.map((s) => (
+              <div
+                key={s.pairKey}
+                style={{
+                  padding: '16px',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--glass-border)',
+                  background: 'var(--bg-secondary)',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', marginBottom: '10px' }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)', fontWeight: '700', textTransform: 'uppercase', marginBottom: '2px' }}>
+                      Your lost report: {s.lostItem.itemName}
+                    </div>
+                    <h4 style={{ fontSize: '1.05rem', fontWeight: '700', color: 'var(--text-primary)', marginBottom: '2px' }}>
+                      ↳ {s.foundItem.itemName}
+                    </h4>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--accent-primary)', fontWeight: '700', textTransform: 'uppercase' }}>
+                      {s.foundItem.category}
+                    </span>
+                  </div>
+                  <div style={{ flexShrink: 0, textAlign: 'center' }}>
+                    <div style={{
+                      fontSize: '1.5rem',
+                      fontWeight: '800',
+                      background: 'var(--accent-gradient)',
+                      WebkitBackgroundClip: 'text',
+                      WebkitTextFillColor: 'transparent',
+                      lineHeight: '1',
+                    }}>
+                      {s.score}
+                    </div>
+                    <span style={{ fontSize: '0.68rem', color: 'var(--text-tertiary)', fontWeight: '600', textTransform: 'uppercase' }}>
+                      score
+                    </span>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '12px' }}>
+                  <div>
+                    <span style={{ fontWeight: '600', color: 'var(--text-tertiary)', fontSize: '0.7rem', textTransform: 'uppercase' }}>📍 Found at</span>
+                    <div style={{ marginTop: '2px', wordBreak: 'break-word' }}>{s.foundItem.foundLocation}</div>
+                  </div>
+                  <div>
+                    <span style={{ fontWeight: '600', color: 'var(--text-tertiary)', fontSize: '0.7rem', textTransform: 'uppercase' }}>📅 Date found</span>
+                    <div style={{ marginTop: '2px' }}>{formatSuggestionDate(s.foundItem.dateFound)}</div>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '14px' }}>
+                  {s.reasons.map((reason, idx) => {
+                    const isDate = reason.startsWith('dateGap');
+                    const isLocation = reason === 'location' || reason === 'location:exact';
+                    return (
+                      <span
+                        key={idx}
+                        style={{
+                          padding: '3px 10px',
+                          borderRadius: '9999px',
+                          fontSize: '0.72rem',
+                          fontWeight: '600',
+                          background: isDate ? 'var(--color-warning-bg)' : isLocation ? 'var(--color-success-bg)' : 'var(--color-info-bg)',
+                          color: isDate ? 'var(--color-warning)' : isLocation ? 'var(--color-success)' : 'var(--color-info)',
+                        }}
+                      >
+                        {formatReason(reason)}
+                      </span>
+                    );
+                  })}
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button
+                    className="btn btn-primary"
+                    style={{ padding: '8px 18px', fontSize: '0.85rem' }}
+                    onClick={() => handleClaimSuggestion(s.foundItem)}
+                  >
+                    📝 Claim This Item
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    style={{ padding: '8px 18px', fontSize: '0.85rem' }}
+                    onClick={() => handleIgnoreSuggestion(s)}
+                  >
+                    🚫 Not relevant
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </GlassCard>
+
+      {/* ─── EXISTING CLAIMS LIST ────────────────────────────────── */}
       {loading ? (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '300px', gap: '16px' }}>
           <div style={{ width: '40px', height: '40px', border: '3px solid var(--glass-border)', borderTop: '3px solid var(--accent-primary)', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />

@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
+import { formatReason } from '../utils/matchAssist';
 import MetricCard from '../components/MetricCard';
 import ItemCard from '../components/ItemCard';
 import GlassCard from '../components/GlassCard';
@@ -20,6 +22,8 @@ const CATEGORIES = [
 
 const Dashboard = () => {
   const { user } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
   
   // Feed states
   const [lostItems, setLostItems] = useState([]);
@@ -39,6 +43,14 @@ const Dashboard = () => {
   const [claimSuccess, setClaimSuccess] = useState(false);
   const [claimSubmitError, setClaimSubmitError] = useState(null);
   const [claiming, setClaiming] = useState(false);
+  const [claimConflicts, setClaimConflicts] = useState([]);
+  const [conflictLoading, setConflictLoading] = useState(false);
+
+  // Possible Matches states
+  const [matchCounts, setMatchCounts] = useState({});
+  const [matchItem, setMatchItem] = useState(null);
+  const [matchList, setMatchList] = useState([]);
+  const [matchLoading, setMatchLoading] = useState(false);
 
   // Fetch Items
   const fetchData = async () => {
@@ -48,8 +60,22 @@ const Dashboard = () => {
         api.getLostItems(),
         api.getFoundItems()
       ]);
-      setLostItems(lost.items || lost);
-      setFoundItems(found.items || found);
+      const lostList = lost.items || lost;
+      const foundList = found.items || found;
+      setLostItems(lostList);
+      setFoundItems(foundList);
+
+      const activeLostIds = lostList
+        .filter((i) => i.status === 'active')
+        .map((i) => i._id);
+      if (activeLostIds.length > 0) {
+        try {
+          const { counts } = await api.getMatchCounts(activeLostIds);
+          setMatchCounts(counts || {});
+        } catch (matchErr) {
+          console.error('Error fetching match counts:', matchErr);
+        }
+      }
     } catch (err) {
       console.error('Error fetching dashboard items:', err);
     } finally {
@@ -61,6 +87,16 @@ const Dashboard = () => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchData();
   }, []);
+
+  // Auto-open claim modal when navigated here with state (e.g. from MyClaims suggestions)
+  useEffect(() => {
+    if (location.state?.openClaimItem) {
+      setFeedType('found');
+      handleOpenClaimModal(location.state.openClaimItem);
+      navigate(location.pathname, { replace: true, state: null });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
 
   // Filter logic
   const getFilteredItems = () => {
@@ -101,17 +137,32 @@ const Dashboard = () => {
   const metrics = getMetrics();
 
   // ─── CLAIM SUBMISSION MODAL LOGIC ────────────────────────────────
-  const handleOpenClaimModal = (item) => {
+  const handleOpenClaimModal = async (item) => {
     setSelectedItem(item);
     setClaimForm({ claimReason: '', proofDetails: '', studentIdProvided: user?.studentId || '' });
     setClaimErrors({});
     setClaimTouched({});
     setClaimSuccess(false);
     setClaimSubmitError(null);
+    setClaimConflicts([]);
+
+    const isFoundItem = !!item?.foundLocation || !!item?.dateFound;
+    if (isFoundItem && item?.status === 'available') {
+      setConflictLoading(true);
+      try {
+        const data = await api.getClaimConflict(item._id);
+        setClaimConflicts(data.conflicts || []);
+      } catch (err) {
+        console.error('Error checking claim conflicts:', err);
+      } finally {
+        setConflictLoading(false);
+      }
+    }
   };
 
   const handleCloseClaimModal = () => {
     setSelectedItem(null);
+    setClaimConflicts([]);
   };
 
   // Real-time claim validation
@@ -182,6 +233,47 @@ const Dashboard = () => {
     } finally {
       setClaiming(false);
     }
+  };
+
+  // ─── POSSIBLE MATCHES PANEL LOGIC ────────────────────────────────
+  const handleOpenMatches = async (item) => {
+    setMatchItem(item);
+    setMatchList([]);
+    setMatchLoading(true);
+    try {
+      const data = await api.getMatchesForLostItem(item._id);
+      setMatchList(data.matches || []);
+    } catch (err) {
+      console.error('Error fetching matches:', err);
+    } finally {
+      setMatchLoading(false);
+    }
+  };
+
+  const handleCloseMatches = () => {
+    setMatchItem(null);
+    setMatchList([]);
+  };
+
+  const handleIgnoreMatch = async (m) => {
+    try {
+      await api.ignoreMatch(matchItem._id, m.foundItem._id);
+      setMatchList((prev) => prev.filter((item) => item.pairKey !== m.pairKey));
+      setMatchCounts((prev) => ({
+        ...prev,
+        [matchItem._id]: Math.max(0, (prev[matchItem._id] || 1) - 1),
+      }));
+    } catch (err) {
+      console.error('Error marking pair as irrelevant:', err);
+    }
+  };
+
+  const formatMatchDate = (dateStr) => {
+    return new Date(dateStr).toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
   };
 
   const filteredItems = getFilteredItems();
@@ -354,6 +446,8 @@ const Dashboard = () => {
                   type={feedType}
                   currentUserId={user?._id}
                   onActionClick={handleOpenClaimModal}
+                  matchCount={feedType === 'lost' ? matchCounts[item._id] || 0 : 0}
+                  onMatchClick={handleOpenMatches}
                 />
               ))}
             </div>
@@ -426,9 +520,45 @@ const Dashboard = () => {
                 <h3 style={{ fontSize: '1.4rem', fontWeight: '800', marginBottom: '6px', color: 'var(--text-primary)' }}>
                   Submit Ownership Claim
                 </h3>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '24px' }}>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '16px' }}>
                   Item: <strong style={{ color: 'var(--text-primary)' }}>{selectedItem.itemName}</strong> ({selectedItem.category})
                 </p>
+
+                {conflictLoading && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 14px', background: 'var(--color-warning-bg)', border: '1px solid var(--color-warning)', borderRadius: 'var(--radius-md)', fontSize: '0.85rem', color: 'var(--color-warning)', fontWeight: '600', marginBottom: '18px' }}>
+                    <div style={{ width: '16px', height: '16px', border: '2px solid var(--color-warning)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                    Checking for potential ownership conflicts...
+                  </div>
+                )}
+
+                {!conflictLoading && claimConflicts.length > 0 && (
+                  <div style={{ background: 'var(--color-warning-bg)', border: '1px solid var(--color-warning)', borderRadius: 'var(--radius-md)', padding: '12px 14px', marginBottom: '18px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.88rem', fontWeight: '700', color: 'var(--color-warning)', marginBottom: '8px' }}>
+                      ⚠️ Possible ownership conflict
+                    </div>
+                    <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '10px', lineHeight: '1.5' }}>
+                      This found item has a high match score with another user's active lost report. A potentially more relevant owner may exist — admins will be notified.
+                    </p>
+                    {claimConflicts.map((c) => (
+                      <div key={c.pairKey} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', padding: '8px 10px', background: 'var(--bg-secondary)', borderRadius: '8px', marginBottom: '6px' }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--text-primary)' }}>
+                            {c.lostItem.itemName}
+                          </div>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
+                            📍 {c.lostItem.location} • reported by {c.lostItem.ownerId?.name || 'another user'}
+                          </div>
+                        </div>
+                        <div style={{ flexShrink: 0, textAlign: 'center' }}>
+                          <div style={{ fontSize: '1.15rem', fontWeight: '800', color: 'var(--color-warning)', lineHeight: '1' }}>
+                            {c.score}
+                          </div>
+                          <div style={{ fontSize: '0.62rem', color: 'var(--text-tertiary)', textTransform: 'uppercase', fontWeight: '600' }}>score</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {claimSubmitError && (
                   <div style={{ background: 'var(--color-danger-bg)', color: 'var(--color-danger)', border: '1px solid var(--color-danger)', padding: '10px 14px', borderRadius: 'var(--radius-md)', fontSize: '0.85rem', fontWeight: '600', marginBottom: '18px' }}>
@@ -493,6 +623,171 @@ const Dashboard = () => {
                   </button>
                 </div>
               </form>
+            )}
+          </GlassCard>
+        </div>
+      )}
+
+      {/* ─── POSSIBLE MATCHES OVERLAY MODAL ───────────────────────────── */}
+      {matchItem && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: '100%',
+            background: 'rgba(0, 0, 0, 0.45)',
+            backdropFilter: 'blur(8px)',
+            zIndex: 1000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '24px',
+          }}
+          onClick={handleCloseMatches}
+        >
+          <GlassCard
+            style={{
+              width: '100%',
+              maxWidth: '620px',
+              maxHeight: '85vh',
+              overflowY: 'auto',
+              padding: '32px',
+              position: 'relative',
+              boxShadow: '0 20px 50px rgba(0, 0, 0, 0.3)',
+              background: 'var(--glass-modal-bg)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={handleCloseMatches}
+              style={{
+                position: 'absolute',
+                top: '20px',
+                right: '20px',
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--text-secondary)',
+                fontSize: '1.2rem',
+                cursor: 'pointer',
+              }}
+            >
+              ✕
+            </button>
+
+            <h3 style={{ fontSize: '1.4rem', fontWeight: '800', marginBottom: '4px', color: 'var(--text-primary)' }}>
+              🔗 Possible Matches
+            </h3>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '24px' }}>
+              Found items that may correspond to your lost report: <strong style={{ color: 'var(--text-primary)' }}>{matchItem.itemName}</strong>
+            </p>
+
+            {matchLoading ? (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '40px 0', gap: '12px' }}>
+                <div style={{ width: '36px', height: '36px', border: '3px solid var(--glass-border)', borderTop: '3px solid var(--accent-primary)', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Finding matches...</p>
+              </div>
+            ) : matchList.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '32px 0' }}>
+                <span style={{ fontSize: '2.5rem', display: 'block', marginBottom: '12px' }}>🔍</span>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.92rem' }}>
+                  No possible matches found yet. New found items will be matched automatically.
+                </p>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                {matchList.map((m) => (
+                  <div
+                    key={m.pairKey}
+                    style={{
+                      padding: '16px',
+                      borderRadius: 'var(--radius-md)',
+                      border: '1px solid var(--glass-border)',
+                      background: 'var(--bg-secondary)',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', marginBottom: '10px' }}>
+                      <div style={{ minWidth: 0 }}>
+                        <h4 style={{ fontSize: '1.05rem', fontWeight: '700', color: 'var(--text-primary)', marginBottom: '2px' }}>
+                          {m.foundItem.itemName}
+                        </h4>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--accent-primary)', fontWeight: '700', textTransform: 'uppercase' }}>
+                          {m.foundItem.category}
+                        </span>
+                      </div>
+                      <div style={{ flexShrink: 0, textAlign: 'center' }}>
+                        <div style={{
+                          fontSize: '1.5rem',
+                          fontWeight: '800',
+                          background: 'var(--accent-gradient)',
+                          WebkitBackgroundClip: 'text',
+                          WebkitTextFillColor: 'transparent',
+                          lineHeight: '1',
+                        }}>
+                          {m.score}
+                        </div>
+                        <span style={{ fontSize: '0.68rem', color: 'var(--text-tertiary)', fontWeight: '600', textTransform: 'uppercase' }}>
+                          score
+                        </span>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '12px' }}>
+                      <div>
+                        <span style={{ fontWeight: '600', color: 'var(--text-tertiary)', fontSize: '0.7rem', textTransform: 'uppercase' }}>📍 Found at</span>
+                        <div style={{ marginTop: '2px', wordBreak: 'break-word' }}>{m.foundItem.foundLocation}</div>
+                      </div>
+                      <div>
+                        <span style={{ fontWeight: '600', color: 'var(--text-tertiary)', fontSize: '0.7rem', textTransform: 'uppercase' }}>📅 Date found</span>
+                        <div style={{ marginTop: '2px' }}>{formatMatchDate(m.foundItem.dateFound)}</div>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '12px' }}>
+                      {m.reasons.map((reason, idx) => {
+                        const isDate = reason.startsWith('dateGap');
+                        const isLocation = reason === 'location' || reason === 'location:exact';
+                        return (
+                          <span
+                            key={idx}
+                            style={{
+                              padding: '3px 10px',
+                              borderRadius: '9999px',
+                              fontSize: '0.72rem',
+                              fontWeight: '600',
+                              background: isDate ? 'var(--color-warning-bg)' : isLocation ? 'var(--color-success-bg)' : 'var(--color-info-bg)',
+                              color: isDate ? 'var(--color-warning)' : isLocation ? 'var(--color-success)' : 'var(--color-info)',
+                            }}
+                          >
+                            {formatReason(reason)}
+                          </span>
+                        );
+                      })}
+                    </div>
+
+                    <button
+                      onClick={() => handleIgnoreMatch(m)}
+                      style={{
+                        padding: '6px 14px',
+                        borderRadius: '8px',
+                        border: '1px solid var(--glass-border)',
+                        background: 'transparent',
+                        color: 'var(--text-tertiary)',
+                        fontSize: '0.78rem',
+                        fontWeight: '600',
+                        cursor: 'pointer',
+                        transition: 'var(--transition-fast)',
+                      }}
+                      onMouseOver={(e) => { e.currentTarget.style.color = 'var(--color-danger)'; e.currentTarget.style.borderColor = 'var(--color-danger)'; }}
+                      onMouseOut={(e) => { e.currentTarget.style.color = 'var(--text-tertiary)'; e.currentTarget.style.borderColor = 'var(--glass-border)'; }}
+                      title="Hide this suggestion"
+                    >
+                      🚫 Not relevant
+                    </button>
+                  </div>
+                ))}
+              </div>
             )}
           </GlassCard>
         </div>
