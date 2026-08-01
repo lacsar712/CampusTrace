@@ -1,0 +1,38 @@
+services:
+  mongo:
+    image: mongo:7
+    restart: always
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ['CMD', 'mongosh', '--eval', "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    ports:
+      - '731:5000'
+    restart: always
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      PORT: 5000
+      NODE_ENV: production
+      MONGO_URI: mongodb://mongo:27017/campustrace
+      JWT_SECRET: campustrace_docker_jwt_secret_change_me
+      STORAGE_MODE: local
+      CLIENT_URL: http://localhost:731
+      # Placeholder values — not used when STORAGE_MODE=local
+      CLOUDINARY_CLOUD_NAME: local
+      CLOUDINARY_API_KEY: local
+      CLOUDINARY_API_SECRET: local
+      SEED_ADMIN: 'true'
+    volumes:
+      - upload_data:/app/uploads
+
+volumes:
+  mongo_data:
+  upload_data:
