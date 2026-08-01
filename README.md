@@ -1,5 +1,3 @@
-# CampusTrace 🎒
-
 专为校园场景打造的现代化全栈失物招领 Web 应用。基于 **MERN** 技术栈（MongoDB、Express、React、Node.js），连接丢失物品的同学与拾得者 / 管理员，完成从上报、认领到归还的全流程闭环。
 
 ---
